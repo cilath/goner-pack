@@ -48,3 +48,9 @@ textarea{min-height:90px;resize:vertical}
 .vw{position:fixed;inset:0;background:#000;z-index:30;display:flex;flex-direction:column;padding-top:env(safe-area-inset-top,0px)}
 .vb{display:flex;gap:8px;align-items:center;padding:10px;background:var(--cd);color:var(--tx)}
 .vs{flex:1;overflow:auto;-webkit-overflow-scrolling:touch}.vs img{display:block;max-width:none}
+
+.card.bad{border-left:4px solid var(--bd)}.card.ok2{border-left:4px solid var(--ok)}
+.stk{position:sticky;top:calc(58px + env(safe-area-inset-top,0px));z-index:4;background:var(--bg);display:flex;gap:8px;align-items:center;padding:4px 0 8px}
+.stk img{height:26vh;max-width:70%;object-fit:contain;background:#000;border-radius:12px;cursor:zoom-in}
+.cropw{touch-action:none;margin-bottom:8px}.cropw canvas{display:block;border-radius:12px;touch-action:none;max-width:100%}
+details.card summary{font-weight:600;cursor:pointer}

@@ -34,7 +34,7 @@ function card(o){const[s,c]=stt(o);return`<div class="card" data-a="open" data-i
 function vHome(){const L=[...S.orders].sort((a,b)=>(a.done-b.done)||b.t-a.t);
  return`<div class="top"><h1>GONER PACK</h1><button class="ib2" data-a="dict">Справочник · ${S.dict.length}</button></div>${DBX?'':`<div class="bn">Память телефона (IndexedDB) недоступна${dbErr?': '+esc(dbErr):''}. Создать заказ нельзя: он не сохранится.</div>`}
  ${L.length?L.map(card).join(''):'<div class="emp">Заказов пока нет.<br>Нажмите «Сканировать чек»: фото распознаётся на телефоне, затем вы проверяете позиции.</div>'}
- <div class="mu" style="text-align:center;margin-top:14px">Версия 011 · справочник ${S.dict.length}</div>
+ <div class="mu" style="text-align:center;margin-top:14px">Версия 012 · справочник ${S.dict.length}</div>
  <div class="fab"><button class="big" data-a="scan">📷 Сканировать чек</button><button class="lnk" data-a="manual">Ввести вручную</button></div>`}
 const pickBtns=()=>`<div class="r"><button class="sm" data-a="pickc" ${S.busy?'disabled':''}>📷 Камера</button><button class="sm" data-a="pickg" ${S.busy?'disabled':''}>🖼 Галерея</button></div>`;
 function phCard(o,k){const t=k==='receipt'?'Фото чека':'Фото готовой доставки',has=k==='receipt'?o.hasReceipt:o.hasDelivery,src=S.ph[o.id+':'+k];let b=`<div class="card"><b>${t}</b>`;
@@ -74,26 +74,30 @@ function ocrCard(){const o=S.ocr||{},d=S.d,r=d.ocrRes;let h=`<div class="card"><
   h+=d.ocrSrc?`<div class="r"><button class="sm" data-a="ocr">Распознать заново</button><button class="sm" data-a="cropopen">✂ Обрезать и заново</button></div>`:'<div class="mu">Фото нет: введите позиции вручную.</div>';
   if(r)h+=`<div class="r"><button class="lnk" data-a="diag" style="padding:4px 0">Скопировать диагностику OCR</button></div>`}
  return h+'</div>'}
-function revSummary(d){const L=d.items.filter(x=>x.kind!=='cutlery'),ok=L.filter(x=>x.st==='o').length,chk=d.items.filter(x=>GP.needsOk(x,true)&&!x.cf).length,bulk=d.items.filter(x=>x.st==='u'&&!x.gb&&!x.cf&&!GP.hard(x).length&&x.kind!=='cutlery').length;
- return L.length?`<div class="card ${chk?'wn':'ok2'}"><b>Блюд: ${L.length} · в справочнике: ${ok} · нужна проверка: ${chk}</b>${bulk>=2?`<div class="r"><button class="sm" data-a="cfall">Оставить как есть все, которых нет в справочнике (${bulk})</button></div>`:''}</div>`:''}
+/* 012: компактный счётчик; длинные карточки не нужны — правильно распознанные позиции не требуют действий */
+function revCounts(d){const L=d.items.filter(x=>x.kind!=='cutlery'),need=d.items.filter(x=>GP.needsOk(x,true)),left=need.filter(x=>!x.cf).length,cut=d.items.filter(x=>x.kind==='cutlery').reduce((a,x)=>a+(x.qty||0),0);return{n:L.length,ok:d.items.length-left,left,need:need.length,cut,dict:L.filter(x=>x.st==='o').length}}
+function revSummary(d){const c=revCounts(d),bulk=d.items.filter(x=>x.st==='u'&&!x.gb&&!x.cf&&!GP.hard(x).length&&x.kind!=='cutlery').length;
+ return c.n?`<div class="cnt"><span class="ok">✓ ${c.ok} готово</span><span class="${c.left?'wn':'ok'}">${c.left?'⚠ проверить '+c.left:'проверять нечего'}</span><span>блюд ${c.n}</span><span>приборов ${c.cut}</span></div>${bulk>=2?`<div class="r" style="margin:0 0 10px"><button class="sm" data-a="cfall">Оставить как есть все блюда не из справочника (${bulk})</button></div>`:''}`:''}
 function itemCard(x,k){const need=GP.needsOk(x,true),hd=GP.hard(x),cut=x.kind==='cutlery',pk=S.srch&&S.srch.i===k;
  const tag=cut?'<span class="tg o">Прибор</span>':x.st==='o'?'<span class="tg o">✓ В справочнике</span>':x.st==='s'?'<span class="tg s">Похоже на запись справочника</span>':x.gb?'<span class="tg u">Похоже на ошибку распознавания</span>':'<span class="tg u">Нет в справочнике</span>';
- const was=x.fixed&&GPM.tokens(x.fixed).join('')!==GPM.tokens(x.name).join('')?`<div class="mu">Распознано: «${esc(x.fixed)}» → исправлено по справочнику</div>`:'';
- const cands=x.st==='s'||x.st==='u'?(x.cand||[]).map((n,j)=>`<button class="sm" data-a="acc" data-i="${k}" data-j="${j}">${x.st==='s'&&j===0?'Заменить на':'Возможно'} «${esc(n)}»</button>`).join(''):'';
- const alts=(x.alts||[]).slice(0,2).map((n,j)=>`<button class="sm" data-a="alt" data-i="${k}" data-j="${j}">Другое прочтение «${esc(n)}»</button>`).join('');
+ const was=x.fixed&&GPM.tokens(x.fixed).join('')!==GPM.tokens(x.name).join('')?`<div class="mu sm2">OCR: «${esc(x.fixed)}» → исправлено по справочнику</div>`:'';
+ const kk=v=>GPM.tokens(v).join(''),seen=new Set([kk(x.name)]),uniqN=v=>{const q=kk(v);if(seen.has(q))return false;seen.add(q);return true};
+ const cands=x.st==='s'||x.st==='u'?(x.cand||[]).map((n,j)=>({n,j})).filter(z=>uniqN(z.n)).map(({n,j})=>`<button class="sm" data-a="acc" data-i="${k}" data-j="${j}">${x.st==='s'&&j===0?'Заменить на':'Возможно'} «${esc(n)}»</button>`).join(''):'';
+ const alts=(x.alts||[]).map((n,j)=>({n,j})).filter(z=>{const m=GPM.match(z.n,S.idx);return!(m.st==='o'&&(m.name===x.name||(x.cand||[]).includes(m.name)))&&uniqN(z.n)}).slice(0,2).map(({n,j})=>`<button class="sm" data-a="alt" data-i="${k}" data-j="${j}">Другое прочтение «${esc(n)}»</button>`).join('');
  const srch=pk?`<div class="srch"><input data-f="sq" placeholder="Поиск по справочнику" value="${esc(S.srch.q)}" autocomplete="off">${GPM.search(S.srch.q||x.name,S.idx,6).map((r,j)=>`<div class="res" data-a="pickd" data-i="${k}" data-k="${esc(r.d.k)}"><b>${esc(r.n)}</b><span class="mu"> ${esc(r.c)}</span></div>`).join('')||'<div class="mu">Ничего не найдено</div>'}<div class="r"><button class="sm" data-a="srchx">Закрыть</button></div></div>`:'';
- return`<div class="card ${need&&!x.cf?'wn':''}"><input data-f="n" data-i="${k}" value="${esc(x.name)}" placeholder="Название">
+ return`<div class="card it ${need&&!x.cf?'wn':''}"><textarea class="nm" data-f="n" data-i="${k}" rows="${Math.max(1,Math.ceil(x.name.length/30))}" placeholder="Название" enterkeyhint="done">${esc(x.name)}</textarea>
  <div class="r"><select data-f="q" data-i="${k}">${qopts(x.qty)}</select><span class="mu">шт.</span>${tag}<span style="flex:1"></span><button class="dl" data-a="del" data-i="${k}">✕</button></div>${was}
  ${hd.length?`<div class="tg s">${hd.map(esc).join('; ')}</div>`:''}
  ${!cut&&x.st!=='o'?`<div class="r">${cands}${alts}<button class="sm" data-a="srch" data-i="${k}">🔍 Из справочника</button>${x.name.trim()?`<button class="sm" data-a="adddict" data-i="${k}">В справочник</button>`:''}</div>`:''}${srch}
  ${need?(x.cf?'<div class="tg o">✓ Подтверждено</div>':`<div class="r"><button class="sm ok2" data-a="cf" data-i="${k}">${x.st==='o'?'Подтверждаю позицию':'Оставить как есть'}</button></div>`):''}</div>`}
+function idWarn(d,lab){const w=(d.warn||[]).find(x=>x.startsWith(lab+' прочитан'));if(!w)return'';const m=w.match(/\(([^)]*)\): выбран (\d+)/);return`<div class="tg s" style="margin:4px 0 8px">${m?`Проходы OCR прочитали по-разному: ${esc(m[1])}. Выбран ${esc(m[2])} — сверьте с фото.`:esc(w)}</div>`}
 function vRev(){const d=S.d,on=true,er=GP.validate(d,on),o=S.ocr||{},q=d.quality&&QL[d.quality],dr=(d.dropped||[]).filter(l=>/[а-яё]{3}/i.test(l)&&l.replace(/[^а-яёa-z0-9]/gi,'').length>=6);
  return`<div class="top"><button class="ib" data-a="home">‹</button><h1>Проверка чека</h1></div>${S.msg?`<div class="bn">${S.msg}</div>`:''}
- ${d.photo?`<div class="stk"><img src="${d.photo}" data-a="viewd" alt="Фото чека"><button class="sm" data-a="viewd">Увеличить</button></div>`:''}
+ ${d.photo?`<div class="thumb"><img src="${d.photo}" data-a="viewd" alt="Фото чека"><div class="mu">Нажмите на фото, чтобы увеличить и сверить чек</div></div>`:''}
  ${ocrCard()}
  ${q&&!o.busy?`<div class="card ${q[1]}"><b>${esc(q[0])}</b></div>`:''}
- ${(d.warn||[]).map(w=>`<div class="bn">${esc(w)}</div>`).join('')}
- <div class="card"><label>Номер предчека<input data-f="no" inputmode="numeric" value="${esc(d.no)}"></label><label style="margin:0">Дополнительный ID<input data-f="ex" inputmode="numeric" value="${esc(d.ex)}"></label></div>
+ ${(d.warn||[]).filter(w=>!/^(Дополнительный ID|Номер предчека) прочитан/.test(w)).map(w=>`<div class="bn">${esc(w)}</div>`).join('')}
+ <div class="card"><label>Номер предчека<input data-f="no" inputmode="numeric" value="${esc(d.no)}"></label>${idWarn(d,'Номер предчека')}<label style="margin:0">Дополнительный ID<input data-f="ex" inputmode="numeric" value="${esc(d.ex)}" class="${(d.warn||[]).some(w=>w.startsWith('Дополнительный ID прочитан'))?'wnf':''}"></label>${idWarn(d,'Дополнительный ID')}</div>
  ${d.notes?`<div class="card"><label style="margin:0">Комментарий повару<textarea data-f="notes" style="min-height:60px">${esc(d.notes)}</textarea></label></div>`:''}
  ${revSummary(d)}
  ${d.items.map((x,k)=>itemCard(x,k)).join('')}
@@ -104,7 +108,7 @@ function vRev(){const d=S.d,on=true,er=GP.validate(d,on),o=S.ocr||{},q=d.quality
  <details class="card"><summary>Текст чека (результат OCR)</summary><label style="margin:8px 0 0">Можно править или вставить свой<textarea data-f="txt" placeholder="Текст чека">${esc(d.txt||'')}</textarea></label><div class="r"><button class="sm" data-a="parse">Разобрать текст</button></div></details>
  ${er.length?`<div class="card"><ul class="er">${er.slice(0,5).map(e=>`<li>${esc(e)}</li>`).join('')}</ul></div>`:''}
  ${S.saveErr?`<div class="bn">${esc(S.saveErr)}</div>`:''}
- <div class="fab"><button class="big" data-a="create" ${er.length||S.busy||o.busy?'disabled':''}>Создать заказ</button></div>`}
+ <div class="fab rv">${(()=>{const c=revCounts(d);return c.n?`<div class="fabc">✓ ${c.ok} из ${d.items.length}${c.left?` · ⚠ осталось проверить ${c.left}`:''}${er.length&&!c.left?' · '+esc(er[0]):''}</div>`:''})()}<button class="big" data-a="create" ${er.length||S.busy||o.busy?'disabled':''}>Создать заказ</button></div>`}
 /* ---------- обрезка ---------- */
 function vCrop(){return`<div class="top"><button class="ib" data-a="cropback">‹</button><h1>Обрезка чека</h1></div>
  <div class="mu" style="margin-bottom:8px">Потяните четыре угла так, чтобы чек занимал почти весь кадр. Наклон и перспектива будут выпрямлены.</div>
@@ -206,7 +210,8 @@ document.addEventListener('change',async e=>{const t=e.target,f=t.dataset.f,i=+t
  else if(f==='no'){d.no=t.value;render()}else if(f==='ex'){d.ex=t.value;render()}
  else if(f==='n'){const x=d.items[i];x.name=t.value;x.ocr=t.value;x.fixed=undefined;x.cf=false;recheck(d);render()}
  else if(f==='q'){d.items[i].qty=+t.value;render()}});
-document.addEventListener('input',e=>{const t=e.target,f=t.dataset.f;if(f==='txt')S.d.txt=t.value;else if(f==='dn')S.dn=t.value;else if(f==='ds'){S.ds=t.value;const p=t.selectionStart;render();const n=$('[data-f=ds]');n.focus();n.setSelectionRange(p,p)}
+document.addEventListener('keydown',e=>{if(e.key==='Enter'&&e.target.classList&&e.target.classList.contains('nm')){e.preventDefault();e.target.blur()}});
+document.addEventListener('input',e=>{const t=e.target,f=t.dataset.f;if(t.classList&&t.classList.contains('nm')){t.style.height='auto';t.style.height=t.scrollHeight+'px'}if(f==='txt')S.d.txt=t.value;else if(f==='dn')S.dn=t.value;else if(f==='ds'){S.ds=t.value;const p=t.selectionStart;render();const n=$('[data-f=ds]');n.focus();n.setSelectionRange(p,p)}
  else if(f==='sq'){S.srch.q=t.value;const p=t.selectionStart;render();const n=$('[data-f=sq]');if(n){n.focus();n.setSelectionRange(p,p)}}else if(f==='dc')S.dcat=t.value;else if(S.edit&&(f==='en'||f==='ec'||f==='ea'))S.edit[f[1]]=t.value});
 /* ---------- Запуск ---------- */
 (async()=>{await initDB();if(DBX){S.orders=await DBX.orders();S.recs=await DBX.dict();await DBX.purgeOrphans()}rebuildDict();if(navigator.storage&&navigator.storage.persist)navigator.storage.persist().catch(()=>{});

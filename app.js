@@ -34,7 +34,7 @@ function card(o){const[s,c]=stt(o);return`<div class="card" data-a="open" data-i
 function vHome(){const L=[...S.orders].sort((a,b)=>(a.done-b.done)||b.t-a.t);
  return`<div class="top"><h1>GONER PACK</h1><button class="ib2" data-a="dict">Справочник · ${S.dict.length}</button></div>${DBX?'':`<div class="bn">Память телефона (IndexedDB) недоступна${dbErr?': '+esc(dbErr):''}. Создать заказ нельзя: он не сохранится.</div>`}
  ${L.length?L.map(card).join(''):'<div class="emp">Заказов пока нет.<br>Нажмите «Сканировать чек»: фото распознаётся на телефоне, затем вы проверяете позиции.</div>'}
- <div class="mu" style="text-align:center;margin-top:14px">Версия 010 · справочник ${S.dict.length}</div>
+ <div class="mu" style="text-align:center;margin-top:14px">Версия 011 · справочник ${S.dict.length}</div>
  <div class="fab"><button class="big" data-a="scan">📷 Сканировать чек</button><button class="lnk" data-a="manual">Ввести вручную</button></div>`}
 const pickBtns=()=>`<div class="r"><button class="sm" data-a="pickc" ${S.busy?'disabled':''}>📷 Камера</button><button class="sm" data-a="pickg" ${S.busy?'disabled':''}>🖼 Галерея</button></div>`;
 function phCard(o,k){const t=k==='receipt'?'Фото чека':'Фото готовой доставки',has=k==='receipt'?o.hasReceipt:o.hasDelivery,src=S.ph[o.id+':'+k];let b=`<div class="card"><b>${t}</b>`;

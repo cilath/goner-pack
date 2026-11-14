@@ -1,7 +1,7 @@
-/* GONER PACK 010 (на базе 009): конвейер распознавания чека. Не зависит от DOM и от конкретного OCR-движка:
+/* GONER PACK 011 (на базе 010): конвейер распознавания чека. Не зависит от DOM и от конкретного OCR-движка:
    движок передаётся функцией recognize(img,{psm,tag},onPct) → {text,words:[{text,conf,x0,y0,x1,y1,line}]}.
    В браузере это Tesseract.js (ocr.js), в тестах — нативный Tesseract (tests/node-recognizer.js). */
-(function(r,f){const m=f(typeof require==='function'&&typeof module==='object'?require('./imgproc.js'):r.IMG,typeof require==='function'&&typeof module==='object'?require('./parser.js'):r.GP);if(typeof module==='object'&&module.exports)module.exports=m;else r.PIPE=m})(typeof self!=='undefined'?self:this,function(IMG,GP){
+(function(r,f){const nd=typeof require==='function'&&typeof module==='object',m=f(nd?require('./imgproc.js'):r.IMG,nd?require('./parser.js'):r.GP,nd?require('./matcher.js'):r.GPM);if(typeof module==='object'&&module.exports)module.exports=m;else r.PIPE=m})(typeof self!=='undefined'?self:this,function(IMG,GP,GPM){
 const TARGET_H=34;                       // целевая высота букв (px) для OCR: при меньшей Tesseract ошибается чаще
 const VARIANTS=[                         // порядок: сначала самые вероятные; дальше работают только если первый не дал надёжного чека
  {id:'contrast',label:'Контраст, увеличение',psm:4,prep:(c,s)=>IMG.stretch(IMG.resize(c,c.w*s,c.h*s))},
@@ -12,27 +12,48 @@ const idOf=(w,k)=>w&&w[k];
 const rank=p=>p.quality==='good'?2:p.quality==='ok'?1:0,better=(a,b)=>rank(a)-rank(b)||a.score-b.score;
 /* два разбора одного прохода: «как отдал Tesseract» и «по геометрии слов» (строки пересобраны по y); берём лучший по самопроверке */
 function parseRun(res){const pT=GP.parse(res.text);let gl=null,pG=null;
- if(res.words&&res.words.length>8){gl=GP.linesFromWords(res.words);if(gl.text)pG=GP.parse(gl.text)}
+ if(res.words&&res.words.length>8){gl=GP.linesFromWords(res.words);if(gl.text)pG=GP.parse(gl.text,{lineY:gl.lines.map(l=>(l.y0+l.y1)/2)})}
  const useG=pG&&better(pG,pT)>0;return{parsed:useG?pG:pT,src:useG?'geo':'text',gl,alt:useG?pT:pG}}
 /* границы таблицы по пересобранным строкам: от заголовка «Наименование/Кол-во/Сумма» до первой строки итогов */
 function tableBounds(gl){if(!gl||!gl.lines.length)return null;const L=gl.lines,th=L.findIndex(l=>GP.isTH(l.text));if(th<0)return null;let te=-1;for(let i=th+1;i<L.length;i++)if(GP.isTot(L[i].text)||GP.isPay(L[i].text)){te=i;break}
  if(te<0||te-th<2)return null;return{y0:L[th].y1-.05*gl.H,y1:L[te].y0+.05*gl.H,lines:te-th-1}}
-/* Объединение проходов: строки разных проходов сопоставляются по сумме позиции (она читается надёжнее названия).
-   Название берётся из справочника, если какой-то проход дал уверенное совпадение, иначе — медоид прочтений.
-   Строка, которой нет в лучшем проходе, добавляется только если после этого сходится итог чека. */
-const sk=x=>x.sum!=null?x.sum.toFixed(2):null;
-function consensus(runs,best,opt){const m=opt&&opt.match,P=best.parsed,info={renamed:0,added:0,qtyConflicts:0},groups={};
- runs.forEach(r=>{const seen={};r.parsed.items.filter(x=>x.kind==='dish'&&x.sum!=null).forEach(x=>{const k=sk(x),n=seen[k]=(seen[k]||0)+1,g=k+'#'+n;(groups[g]=groups[g]||[]).push({name:x.name,qty:x.qty,w:r.id===best.id?1.5:1,run:r.id})})});
- const choose=c=>{if(m){let top=null;for(const x of c){const r=m(x.name);if(r.st==='o'&&(!top||r.score>top.r.score||r.score===top.r.score&&x.w>top.x.w))top={x,r}}if(top)return{name:top.x.name,by:'dict'}}
-  let b=null,bd=1e9;for(const a of c){let d=0;for(const o of c)d+=o.w*GP.lev(GP.norm(a.name),GP.norm(o.name));d-=.01*a.w;if(d<bd){bd=d;b=a}}return{name:b.name,by:'consensus'}};
- const seenB={};P.items.forEach(x=>{if(x.kind!=='dish'||x.sum==null)return;const k=sk(x),n=seenB[k]=(seenB[k]||0)+1,c=groups[k+'#'+n];if(!c||c.length<2)return;
-  const ch=choose(c),all=[...new Set(c.map(z=>z.name))];if(ch.name!==x.name){x.name=ch.name;info.renamed++}
-  if(all.length>1){x.alts=all.filter(z=>GP.norm(z)!==GP.norm(x.name));if(ch.by==='consensus'&&x.alts.length&&!x.doubt.includes('проходы OCR прочитали название по-разному'))x.doubt.push('проходы OCR прочитали название по-разному')}
+/* Объединение проходов (011). Принципы:
+   1) строки разных проходов сопоставляются по сумме позиции (она читается надёжнее названия), а при её расхождении — по вертикальной позиции в кадре (ny), если совпало количество;
+   2) НИКОГДА не сочиняем название: выбираем только из прочтений, реально бывших в проходах, и только «похожие на название» (не мусор, не шапка/реклама);
+   3) если в лучшем проходе строка достоверна — она сохраняется; заменяется лишь на прочтение, подтверждённое справочником лучше;
+   4) строка, которой нет в лучшем проходе, добавляется только если после этого сходится итог чека;
+   5) «другие прочтения» — только близкие по смыслу к выбранному названию. */
+const nameOk=n=>GP.nameish(n)&&!GP.hdrish(n),sk=x=>x.sum!=null?x.sum.toFixed(2):null;
+const simName=(a,b)=>GPM.compare(GPM.tokens(a),GPM.tokens(b)).score;
+function consensus(runs,best,opt){const m=opt&&opt.match,P=best.parsed,info={renamed:0,added:0,qtyConflicts:0,rejected:0,byGeometry:0},groups={},dishOf=r=>r.parsed.items.filter(x=>x.kind==='dish'&&x.sum!=null);
+ runs.forEach(r=>{const seen={};dishOf(r).forEach(x=>{const k=sk(x),n=seen[k]=(seen[k]||0)+1,g=k+'#'+n;(groups[g]=groups[g]||[]).push({name:x.name,qty:x.qty,ny:x.ny,w:r.id===best.id?1.5:1,run:r.id})})});
+ const choose=(c,cur)=>{const vs=c.filter(x=>nameOk(x.name)),curOk=!!cur&&nameOk(cur);
+  if(m){let top=null;for(const x of vs){const r=m(x.name);if(r.st==='o'&&(!top||r.score>top.r.score||r.score===top.r.score&&x.w>top.x.w))top={x,r}}
+   if(top){if(curOk){const rc=m(cur);if(rc.st==='o'&&rc.score>=top.r.score)return{name:cur,by:'best'}}return{name:top.x.name,by:'dict'}}}
+  if(curOk){if(m&&m(cur).st==='o')return{name:cur,by:'best'};const cnt={};vs.forEach(x=>{if(x.run!==best.id){const k=GP.norm(x.name);(cnt[k]=cnt[k]||{n:0,name:x.name}).n++}});
+   const top=Object.values(cnt).sort((p,q)=>q.n-p.n)[0];if(top&&top.n>=2&&GP.norm(top.name)!==GP.norm(cur)&&simName(top.name,cur)>=.75)return{name:top.name,by:'majority'};   // два и более других прохода единодушны и близки
+   return{name:cur,by:'best'}}
+  if(vs.length){let b=null,bd=1e9;for(const a of vs){let d=0;for(const o of vs)d+=o.w*GP.lev(GP.norm(a.name),GP.norm(o.name));d-=.01*a.w;if(d<bd){bd=d;b=a}}return{name:b.name,by:'consensus'}}
+  return{name:cur,by:'none'}};
+ const used=new Set(),seenB={},open=[];
+ P.items.forEach(x=>{if(x.kind!=='dish'||x.sum==null)return;const k=sk(x),n=seenB[k]=(seenB[k]||0)+1,g=k+'#'+n,c=groups[g];if(c&&c.length>=2){used.add(g);x._g=g}else open.push(x)});
+ // координатное сопоставление для строк, у которых сумма в других проходах прочитана иначе
+ open.forEach(x=>{if(x.ny==null)return;const c=[];runs.forEach(r=>{if(r.id===best.id)return;dishOf(r).concat(r.parsed.items.filter(y=>y.kind==='dish'&&y.sum==null)).forEach(y=>{if(y.ny!=null&&Math.abs(y.ny-x.ny)<=.02&&y.qty===x.qty&&nameOk(y.name)&&simName(y.name,x.name)>=.5)c.push({name:y.name,qty:y.qty,ny:y.ny,w:1,run:r.id})})});
+  if(c.length){x._extra=c;info.byGeometry++}});
+ P.items.forEach(x=>{if(x.kind!=='dish')return;let c=x._g?groups[x._g].slice():[{name:x.name,qty:x.qty,w:1.5,run:best.id}];if(x._extra)c=c.concat([{name:x.name,qty:x.qty,w:1.5,run:best.id}],x._extra);delete x._g;delete x._extra;
+  const ch=choose(c,x.name),good=c.filter(z=>nameOk(z.name));if(ch.name&&ch.name!==x.name){x.name=ch.name;info.renamed++}
+  const alts=[...new Map(good.filter(z=>GP.norm(z.name)!==GP.norm(x.name)&&simName(z.name,x.name)>=.75).map(z=>[GP.norm(z.name),z.name])).values()];
+  if(alts.length){x.alts=alts.slice(0,2);if(ch.by==='consensus'&&!x.doubt.includes('проходы OCR прочитали название по-разному'))x.doubt.push('проходы OCR прочитали название по-разному')}
+  if(!nameOk(x.name)&&!x.doubt.some(d=>d.startsWith('название похоже на мусор')))x.doubt.push('название похоже на мусор распознавания: проверьте по фото');
   const qs=[...new Set(c.map(z=>z.qty))];if(qs.length>1){info.qtyConflicts++;const t='количество в проходах OCR разное: '+qs.join(' / ');if(!x.doubt.some(d=>d.startsWith('количество в проходах')))x.doubt.push(t)}});
+ // приборы: количество — по большинству проходов, у каждого прибора отдельная строка
+ P.items.forEach(x=>{if(x.kind!=='cutlery')return;const v={};runs.forEach(r=>r.parsed.items.forEach(y=>{if(y.kind==='cutlery'&&GP.norm(y.name)===GP.norm(x.name))v[y.qty]=(v[y.qty]||0)+(r.id===best.id?1.5:1)}));
+  const top=Object.entries(v).sort((a,b)=>b[1]-a[1]);if(top.length>1){const q=+top[0][0];if(q!==x.qty&&top[0][1]>top[1][1]){x.qty=q;info.cutleryFixed=(info.cutleryFixed||0)+1}if(top[0][1]-top[1][1]<1.5&&!x.doubt.includes('количество прибора в проходах OCR разное'))x.doubt.push('количество прибора в проходах OCR разное')}});
  if(!(P.check&&P.check.ok)&&P.tableFound){const have=new Set(Object.keys(seenB).flatMap(k=>Array.from({length:seenB[k]},(_,i)=>k+'#'+(i+1)))),readings=[...new Set(runs.flatMap(r=>(r.parsed.check&&r.parsed.check.readings)||[]))];
   let cur=P.items.reduce((a,x)=>a+(x.sum||0),0);const miss=Object.entries(groups).filter(([g])=>!have.has(g)).sort((a,b)=>b[1].length-a[1].length);
   for(const[g,c]of miss){const sum=+g.split('#')[0],hit=readings.some(v=>Math.abs(cur+sum-v)<=.02),sup=new Set(c.map(z=>z.run)).size;if(!hit&&!(sup>=2&&!readings.length))continue;
-   const ch=choose(c),q=c[0];P.items.push({name:ch.name,qty:q.qty,kind:'dish',sum,doubt:[hit?'строка найдена только в другом проходе OCR; после её добавления сумма чека сошлась':'строка найдена в нескольких проходах OCR; проверьте по фото'],added:true});cur+=sum;info.added++;if(hit)break}
+   if(!c.some(z=>nameOk(z.name))){info.rejected++;continue}
+   const ch=choose(c,null),q=c[0];P.items.push({name:ch.name,qty:q.qty,kind:'dish',sum,doubt:[hit?'строка найдена только в другом проходе OCR; после её добавления сумма чека сошлась':'строка найдена в нескольких проходах OCR; проверьте по фото'],added:true});cur+=sum;info.added++;if(hit)break}
   P.items.sort((a,b)=>(a.kind==='cutlery')-(b.kind==='cutlery'));
   if(info.added&&readings.length){const ok=readings.some(v=>Math.abs(cur-v)<=.02);P.check={sum:+cur.toFixed(2),total:ok?+cur.toFixed(2):(P.check&&P.check.total)||readings[0],readings,ok};if(ok){P.warn=P.warn.filter(w=>!w.startsWith('Сумма позиций'));P.skipped=P.skipped||[];if(P.no&&P.items.some(x=>x.kind==='dish'))P.quality='good'}}}
  P.merge=info;return info}
@@ -61,8 +82,8 @@ async function recognizeReceipt(src,o){o=o||{};const T0=Date.now(),log=[],P=o.on
    const t0=Date.now(),res=await o.recognize(band,{psm:6,tag:'header'},p=>P({phase:'header',pct:p,label:'Проход по заголовку (номер чека)'})),n=GP.numberFrom(res.text);log.push({id:'header',ms:Date.now()-t0,no:n,text:res.text,scale:k});if(n)hdrVotes.push({v:n,w:2})}catch(e){log.push({id:'header',error:String(e)})}}}
  const base=wordH>0?TARGET_H/wordH:1.5,s0=Math.max(1,Math.min(2.2,base*(o.scaleMul||1))),runs=[];
  for(let i=0;i<Math.min(maxRuns,VARIANTS.length);i++){if(cancelled())break;const V=VARIANTS[i];P({phase:'variant',run:i+1,runs:maxRuns,label:V.label,id:V.id});
-  const t0=Date.now(),img=V.prep(crop,s0),res=await o.recognize(img,{psm:V.psm,tag:V.id},p=>P({phase:'variant',run:i+1,runs:maxRuns,label:V.label,id:V.id,pct:p})),pr=parseRun(res),parsed=pr.parsed;
-  runs.push({id:V.id,label:V.label,psm:V.psm,ms:Date.now()-t0,size:[img.w,img.h],text:res.text,geoText:pr.gl&&pr.gl.text,src:pr.src,parsed,score:parsed.score,_img:img,_gl:pr.gl});
+  const t0=Date.now(),img=V.prep(crop,s0),res=await o.recognize(img,{psm:V.psm,tag:V.id},p=>P({phase:'variant',run:i+1,runs:maxRuns,label:V.label,id:V.id,pct:p})),pr=parseRun(res),parsed=pr.parsed;parsed.items.forEach(x=>{if(x.y!=null)x.ny=x.y/img.h});
+  runs.push({id:V.id,label:V.label,psm:V.psm,ms:Date.now()-t0,size:[img.w,img.h],nwords:(res.words||[]).length,text:res.text,geoText:pr.gl&&pr.gl.text,src:pr.src,parsed,score:parsed.score,_img:img,_gl:pr.gl});
   const good=runs.filter(r=>r.parsed.quality==='good'),nv=vote(runs,'no');if(runs.length>=2&&good.length>=1&&nv&&nv.votes>=3&&good.length>=1)break} // ≥2 прохода, один даёт сошедшуюся сумму, номер подтверждён
  if(!runs.length)return{cancelled:true,runs,log,locate};
  /* если ни один проход не сошёлся с итогом — отдельный проход по таблице блюд (полоса между заголовком и итогами, без шапки и рекламы) */
@@ -83,6 +104,6 @@ async function recognizeReceipt(src,o){o=o||{};const T0=Date.now(),log=[],P=o.on
  parsed.confidence={no:vn?(vn.unanimous&&runs.length>1?'подтверждён':'не подтверждён'):'нет',runs:runs.length};
  if(!vn)parsed.warn.push('Номер предчека не найден ни в одном проходе: введите вручную по фото.');
  return{best:{id:best.id,label:best.label,text:best.text},parsed,runs:runs.map(({parsed,_img,_gl,...r})=>({...r,no:parsed.no,ex:parsed.ex,quality:parsed.quality,items:parsed.items.length,skipped:parsed.skipped.length})),merge:cons,locate,log,totalMs:Date.now()-T0,scale:s0}}
-function diagnostics(res,meta){const L=['GONER PACK 010: диагностика распознавания',`Время: ${new Date().toISOString()}`,meta?`Устройство: ${meta}`:'',`Общее время: ${Math.round((res.totalMs||0)/1000)} с; область: ${JSON.stringify(res.locate||{})}`,`Выбран проход: ${res.best&&res.best.label}`,''];
- (res.runs||[]).forEach(r=>{L.push(`--- проход «${r.label}» (${r.id}, PSM ${r.psm}, ${Math.round(r.ms/1000)} с, ${r.size&&r.size.join('×')}): номер=${r.no||'—'} ID=${r.ex||'—'} позиций=${r.items} качество=${r.quality}`);L.push(r.text||'')});return L.filter(x=>x!==null).join('\n')}
+function diagnostics(res,meta){const L=['GONER PACK 011: диагностика распознавания',`Время: ${new Date().toISOString()}`,meta?`Устройство: ${meta}`:'',`Общее время: ${Math.round((res.totalMs||0)/1000)} с; область: ${JSON.stringify(res.locate||{})}`,`Выбран проход: ${res.best&&res.best.label}`,''];
+ (res.runs||[]).forEach(r=>{L.push(`--- проход «${r.label}» (${r.id}, PSM ${r.psm}, ${Math.round(r.ms/1000)} с, ${r.size&&r.size.join('×')}): номер=${r.no||'—'} ID=${r.ex||'—'} позиций=${r.items} качество=${r.quality} слов с рамками=${r.nwords==null?'?':r.nwords} разбор=${r.src||'?'}`);L.push(r.text||'')});return L.filter(x=>x!==null).join('\n')}
 return{recognizeReceipt,diagnostics,vote,VARIANTS,TARGET_H,consensus,parseRun,tableBounds}});

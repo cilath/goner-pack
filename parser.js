@@ -1,4 +1,4 @@
-/* GONER PACK 010 (на базе 009): разбор текста чека по блокам (шапка / приборы / «повару» / таблица / итоги / реклама).
+/* GONER PACK 011 (на базе 010): разбор текста чека по блокам (шапка / приборы / «повару» / таблица / итоги / реклама).
    Работает в браузере (window.GP) и в Node (тесты). Позиции берутся ТОЛЬКО из таблицы между
    заголовком «Наименование / Кол-во / Сумма» и первой строкой итогов; всё остальное не может стать блюдом. */
 (function(root,f){const m=f();if(typeof module==='object'&&module.exports)module.exports=m;else root.GP=m})(typeof self!=='undefined'?self:this,function(){
@@ -18,11 +18,17 @@ const CUT=/^(?:палочк|ложк|нож|вилк|прибор)/i;
 const isTH=l=>has(l,'наименование',3)||(has(l,'сумма',2)&&(has(l,'кол',1)||has(l,'колв',2)||has(l,'количество',3)));
 const isPay=l=>has(l,'оплате',2);
 const isTot=l=>has(l,'итог',1)||has(l,'итого',1)||(has(l,'сумма',2)&&(has(l,'счета',2)||has(l,'скидки',2)))||has(l,'скидки',2)||has(l,'счета',1)||has(l,'экономия',2);
-const cutName=l=>{const w=words(l);for(const[k,n]of[['палочки','Палочки'],['палочка','Палочки'],['ложки','Ложки'],['ложка','Ложки'],['вилки','Вилки'],['вилка','Вилки'],['ножи','Ножи'],['приборы','Приборы'],['прибор','Приборы']])if(w.some(x=>Math.abs(x.length-k.length)<=2&&lev(x,k)<=(k.length>5?2:1)))return n;return''};
+const cutName=l=>{const w=words(l);if(has(l,'нож',1)&&has(l,'вилка',2))return'Нож и вилка';for(const[k,n]of[['палочки','Палочки'],['палочка','Палочки'],['ложки','Ложки'],['ложка','Ложки'],['вилки','Вилки'],['вилка','Вилки'],['ножи','Ножи'],['приборы','Приборы'],['прибор','Приборы']])if(w.some(x=>Math.abs(x.length-k.length)<=2&&lev(x,k)<=(k.length>5?2:1)))return n;return''};
 const sentence=s=>{const t=s.trim();if(!t)return t;const odd=t.split(' ').some(w=>/[а-яёa-z]/.test(w.slice(1))&&/[А-ЯЁA-Z]/.test(w.slice(1))),allUp=t===t.toUpperCase()&&/[А-ЯЁ]{3}/.test(t),mix=/[а-яё]/.test(t)&&t.split(' ').some(w=>/^[А-ЯЁ]{3,}$/.test(w));return odd||allUp||mix?t.charAt(0).toUpperCase()+t.slice(1).toLowerCase():t};
 const glyph=s=>s.replace(/(^|\s)\((?=[а-яё]{2})/gi,(m,a)=>a+'С');
 const lead=s=>{const t=s.split(' ');let k=0;while(k<t.length-1&&k<5&&(letters(t[k])<2||letters(t[k])<3&&/[^а-яёa-z]/i.test(t[k]))&&t.slice(k+1).some(x=>letters(x)>=3))k++;return{name:t.slice(k).join(' '),cut:k>0}};
 const clean=s=>s.replace(/^[^а-яёa-z0-9«"(]+|[^а-яёa-z0-9»")]+$/gi,'').replace(/\s+/g,' ').trim();
+/* «похоже на название блюда»: не мусор OCR (длинные слитные цепочки, ряды гласных/согласных) */
+function nameish(l){const w=cyr(l).split(/[^а-я]+/).filter(Boolean),L=w.join('').length;if(!L)return false;let good=0,big=0;
+ for(const x of w){if(x.length>16)continue;if(x.length>=3){const v=(x.match(/[аеёиоуыэюя]/g)||[]).length;if(v===0||v/x.length<.2||v/x.length>.75||/[аеёиоуыэюя]{5,}/.test(x)||/[^аеёиоуыэюяйьъ]{6,}/.test(x))continue;if(x.length>=4)big++}good+=x.length}
+ return big>0&&good/L>=.6}
+/* слова шапки/рекламы: название ресторана, «онлайн-касса», «японская & европейская кухня» — не могут быть частью названия блюда */
+const hdrish=l=>has(l,'кухня',1)||has(l,'европейская',3)||has(l,'касса',1)||has(l,'онлайн',2)||has(l,'евразия',2)||/&/.test(l);
 const money=l=>{const m=[...l.matchAll(/(\d{1,6}[.,]\d{2})(?!\d)/g)];return m.length?parseFloat(m[m.length-1][1].replace(',','.')):null};
 const pickNo=l=>{const m=[...l.matchAll(/(?<![\d.:,])\d{4,10}(?![\d]|[.:,]\d)/g)].map(x=>x[0]);if(m.length)return m.sort((a,b)=>b.length-a.length)[0];const s=l.match(/(\d[\d ]{3,12}\d)(?![.:]\d)/);return s&&!/[.:]/.test(l)?s[1].replace(/ /g,''):''};
 /* Строка таблицы: якорь — ближайшая к правому краю пара «количество + сумма с 2 знаками» (или «количество, цена, сумма»).
@@ -46,7 +52,7 @@ function rowOf(l){const t=l.split(' ').filter(Boolean),F=t.map(x=>fixTok(x.repla
  /* запасной вариант: строка заканчивается числами, но без двух знаков в сумме */
  let k=0;while(k<3&&k<t.length&&F[t.length-1-k]!==null)k++;
  if(!k)return{kind:'text'};return{kind:k===1?'one':'bad'}}
-function parse(text){
+function parse(text,meta){
  const L=String(text).split(/\r?\n/).map(s=>s.replace(/\s+/g,' ').trim()).filter(Boolean),U=new Set(),out={no:'',ex:'',notes:'',items:[],skipped:[],dropped:[],warn:[],check:null,quality:'bad',score:0,tableFound:false};
  /* 1. номер: допускаем ошибки OCR в «ПРЕДЧЕК АДМИН №» */
  let ni=L.findIndex(l=>has(l,'предчек',2)||(has(l,'админ',1)&&/\d/.test(l)));if(ni<0)ni=L.findIndex(l=>has(l,'предчек',3)||has(l,'админ',2));
@@ -59,6 +65,7 @@ function parse(text){
  const cuts=[];L.forEach((l,i)=>{if(inT(i)||U.has(i))return;const n=cutName(l);if(!n)return;cuts.push(i);U.add(i);const w=l.split(' ').map(x=>fixTok(x.replace(/[;:,]+$/,''))).find(x=>x&&qtyLike(x));if(w)out.items.push({name:n,qty:+w,kind:'cutlery',doubt:[]})});
  const exRe=/^(?:\S{1,4}\s+){0,2}\D{0,2}(\d{4,10})\s*[:;.]?\s*$/;
  if(cuts.length){for(let j=cuts[0]-1;j>=Math.max(0,cuts[0]-3);j--){const m=L[j].match(exRe);if(m){out.ex=m[1];U.add(j);break}}}
+ if(!out.ex&&cuts.length)for(let j=cuts[0]-1;j>=Math.max(0,cuts[0]-3);j--){if(U.has(j))continue;const m=L[j].match(/(?<![\d.,])(\d{5,10})\s*[:;](?![\d])/);if(m){out.ex=m[1];U.add(j);break}}
  if(!out.ex)for(let i=0;i<(th>=0?th:L.length);i++){const m=L[i].match(/^(\d{5,10})\s*:\s*$/);if(m&&!U.has(i)){out.ex=m[1];U.add(i);break}}
  /* 4. комментарий повару */
  const ck=L.findIndex(l=>has(l,'повару',2));
@@ -68,14 +75,21 @@ function parse(text){
  /* 5. таблица позиций */
  const rows=[];let pend='',prev=null;const flush=()=>{if(pend){out.skipped.push({line:pend,why:'строка без количества'});pend=''}};
  const lo=th>=0?th+1:0,hi=th>=0?te:L.length;
+ const FN_END=/(?:^|\s)(?:с|со|из|на|по|и|в|без|для|от)$/i;
  for(let i=lo;i<hi;i++){if(U.has(i))continue;const l=L[i];
   if(th<0&&(isTot(l)||isPay(l)||/\d{2}\.\d{2}\.\d{2,4}|\d{1,2}:\d{2}/.test(l)))continue;
-  if(!wordlike(l))continue;const r=rowOf(l);U.add(i);
-  if(r.kind==='text'){if(prev&&/^[а-яёa-z]/.test(l)&&!pend&&!/\d.*\d/.test(l)&&l.split(' ').length<=6){prev.name+=' '+clean(l);if(!prev.doubt.includes('перенос названия'))prev.doubt.push('перенос названия')}else if(words(l).some(x=>x.length>=4)&&/[а-яё]{3}/i.test(l)){flush();pend=lead(clean(l)).name}continue}
+  if(!wordlike(l))continue;const r=rowOf(l);
+  if(r.kind==='text'){ /* строка без чисел: часть названия только внутри таблицы, не мусор и не шапка/реклама; без найденного заголовка таблицы фрагменты не склеиваются вообще */
+   const okTxt=th>=0&&nameish(l)&&!hdrish(l);if(!okTxt)continue;U.add(i);
+   if(prev&&/^[а-яёa-z]/.test(l)&&!pend&&!/\d.*\d/.test(l)&&l.split(' ').length<=6){prev.name+=' '+clean(l);if(!prev.doubt.includes('перенос названия'))prev.doubt.push('перенос названия')}else if(words(l).some(x=>x.length>=4)&&/[а-яё]{3}/i.test(l)){flush();pend=lead(clean(l)).name}continue}
+  if(th<0&&(r.kind!=='row'))continue;                                                  // вне таблицы строка без «количество + сумма» — не позиция и не «пропущенная строка»
+  U.add(i);
   if(r.kind!=='row'||letters(r.name)<3&&!pend){flush();out.skipped.push({line:clean(l),why:'не удалось определить количество и сумму'});prev=null;continue}
-  const nm=[pend,r.name].filter(Boolean).join(' '),d=[...r.d];if(pend)d.push('перенос названия');pend='';
+  if(hdrish(r.name)&&!pend){out.skipped.push({line:clean(l),why:'похоже на шапку или рекламу'});prev=null;continue}
+  let nm=r.name;const d=[...r.d];
+  if(pend){const glue=/^[а-яё]/.test(r.name)||FN_END.test(pend);if(glue&&!hdrish(pend)){nm=pend+' '+r.name;d.push('перенос названия')}else out.skipped.push({line:pend,why:'начало названия без количества'});pend=''}
   if(th<0)d.push('таблица позиций не найдена: проверьте строку');
-  prev={name:nm,qty:r.qty,kind:CUT.test(nm)?'cutlery':'dish',doubt:d,sum:r.sum,dot:r.dot};rows.push(prev)}
+  prev={name:nm,qty:r.qty,kind:CUT.test(nm)?'cutlery':'dish',doubt:d,sum:r.sum,dot:r.dot};if(meta&&meta.lineY&&meta.lineY[i]!=null)prev.y=meta.lineY[i];rows.push(prev)}
  flush();
  const dots=rows.filter(r=>r.dot).length;if(dots&&dots>=rows.length/2)rows.forEach(r=>{if(!r.dot)r.doubt.push('количество без «.0»: возможна ошибка OCR')});
  out.items.push(...rows.map(({dot,...r})=>r));
@@ -84,7 +98,8 @@ function parse(text){
  const cand=[];L.forEach((l,i)=>{if(i<te&&!(isPay(l)&&(th<0||i<th)))return;if(isPay(l)||has(l,'итог',1)||has(l,'итого',1)||(has(l,'сумма',2)&&(has(l,'счета',2)||has(l,'скидки',2)))){const m=money(l);if(m!==null&&m>0)cand.push(m)}});
  const votes={};cand.forEach(v=>{const k=v.toFixed(2);votes[k]=(votes[k]||0)+1});
  const sum=rows.reduce((a,r)=>a+(r.sum||0),0),best=Object.entries(votes).sort((a,b)=>b[1]-a[1])[0];
- if(th>=0&&cand.length&&rows.length){const ok=cand.some(v=>near(sum,v,.02));out.check={sum:+sum.toFixed(2),total:ok?+sum.toFixed(2):+best[0],readings:cand,ok};
+ if(cand.length&&rows.length){const ok=cand.some(v=>near(sum,v,.02));out.check={sum:+sum.toFixed(2),total:ok?+sum.toFixed(2):+best[0],readings:cand,ok};
+  if(ok&&th<0)out.items.forEach(r=>{r.doubt=r.doubt.filter(x=>!x.startsWith('таблица позиций не найдена'))});
   if(!ok)out.warn.push(`Сумма позиций ${sum.toFixed(2)} не сходится с итогом чека (прочитано: ${[...new Set(cand.map(v=>v.toFixed(2)))].join(', ')}). Возможно, потеряна строка или неверно прочитана цифра. Сверьте с фото.`)}
  /* 7. объединение повторов */
  const mg=[];out.items.forEach(x=>{const key=x.kind+norm(x.name),y=mg.find(z=>z.key===key);if(y){y.qty+=x.qty;y.sum=+((y.sum||0)+(x.sum||0)).toFixed(2);x.doubt.forEach(d=>y.doubt.includes(d)||y.doubt.push(d))}else mg.push({...x,key})});
@@ -92,7 +107,8 @@ function parse(text){
  out.dropped=L.filter((l,i)=>!U.has(i));
  const dish=out.items.some(x=>x.kind==='dish');
  out.quality=out.no&&out.tableFound&&dish&&out.check&&out.check.ok?'good':out.no&&out.items.length?'ok':'bad';
- out.score=(out.no?40:0)+(out.tableFound?20:0)+out.items.length*10+(out.check?(out.check.ok?50:-20):0)+(out.ex?10:0)-out.skipped.length*3;
+ const dsh=out.items.filter(x=>x.kind==='dish'),okN=dsh.filter(x=>nameish(x.name)&&!hdrish(x.name)),clr=okN.filter(x=>!x.doubt.length).length;
+ out.score=(out.no?30:0)+(out.tableFound?30:0)+(out.check?(out.check.ok?70:-25):0)+(out.ex?8:0)+clr*6+(okN.length-clr)*3-(dsh.length-okN.length)*15-out.skipped.length*8;
  return out}
 /* Пересборка строк по геометрии слов: слова одной визуальной строки (близкий y) склеиваются слева направо,
    даже если OCR разнёс их по разным строкам/блоками (так теряются количество и сумма рядом с названием). */
@@ -118,4 +134,4 @@ function validate(d,on){const er=[];if(!/^\d+$/.test(String(d.no||'').trim()))er
 /* номер предчека из короткого текста (полоса заголовка): строка со словом «предчек/админ», иначе единственное длинное число */
 function numberFrom(text){const L=String(text).split(/\r?\n/).map(x=>x.replace(/\s+/g,' ').trim()).filter(Boolean),i=L.findIndex(l=>has(l,'предчек',3)||has(l,'админ',2));if(i>=0){const n=pickNo(L[i]);if(n)return n}
  const c=L.filter(l=>!/время|дата|\d{2}\.\d{2}\.\d{2,4}/i.test(l)).map(pickNo).filter(n=>/^\d{6,8}$/.test(n));return c.length===1?c[0]:''}
-return{hard,parse,parseTable,linesFromWords,isTH,isTot,isPay,validate,needsOk,norm,intQty,lev,numberFrom,has,cyr}});
+return{nameish,hdrish,hard,parse,parseTable,linesFromWords,isTH,isTot,isPay,validate,needsOk,norm,intQty,lev,numberFrom,has,cyr}});

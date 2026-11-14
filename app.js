@@ -1,5 +1,5 @@
 const $=s=>document.querySelector(s),esc=s=>String(s??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
-const S={orders:[],dict:[],recs:[],idx:[],srch:null,edit:null,ddk:null,dr:false,dcat:'',v:'home',id:null,d:null,ds:'',dn:'',fin:false,photoOpen:false,ocr:{},msg:'',ph:{},viewer:null,pick:null,repl:0,phErr:null,saveErr:'',busy:false};const DAY=864e5,norm=GP.norm;
+const S={engine:(()=>{try{return localStorage.getItem('gp-engine')||'neural'}catch(e){return'neural'}})(),orders:[],dict:[],recs:[],idx:[],srch:null,edit:null,ddk:null,dr:false,dcat:'',v:'home',id:null,d:null,ds:'',dn:'',fin:false,photoOpen:false,ocr:{},msg:'',ph:{},viewer:null,pick:null,repl:0,phErr:null,saveErr:'',busy:false};const DAY=864e5,norm=GP.norm;
 function toast(m,bad){const t=$('#toast');t.textContent=m;t.className='toast on'+(bad?' bad':'');clearTimeout(toast.h);toast.h=setTimeout(()=>t.className='toast',bad?8000:3000)}
 /* ---------- IndexedDB (V008: orders + photos + dict, схема v2; логика в db.js) ---------- */
 let DBX=null,dbErr='';
@@ -34,7 +34,7 @@ function card(o){const[s,c]=stt(o);return`<div class="card" data-a="open" data-i
 function vHome(){const L=[...S.orders].sort((a,b)=>(a.done-b.done)||b.t-a.t);
  return`<div class="top"><h1>GONER PACK</h1><button class="ib2" data-a="dict">Справочник · ${S.dict.length}</button></div>${DBX?'':`<div class="bn">Память телефона (IndexedDB) недоступна${dbErr?': '+esc(dbErr):''}. Создать заказ нельзя: он не сохранится.</div>`}
  ${L.length?L.map(card).join(''):'<div class="emp">Заказов пока нет.<br>Нажмите «Сканировать чек»: фото распознаётся на телефоне, затем вы проверяете позиции.</div>'}
- <div class="mu" style="text-align:center;margin-top:14px">Версия 012 · справочник ${S.dict.length}</div>
+ <div class="mu" style="text-align:center;margin-top:14px">Версия 013 · справочник ${S.dict.length} · <a href="lab.html">OCR LAB</a></div>
  <div class="fab"><button class="big" data-a="scan">📷 Сканировать чек</button><button class="lnk" data-a="manual">Ввести вручную</button></div>`}
 const pickBtns=()=>`<div class="r"><button class="sm" data-a="pickc" ${S.busy?'disabled':''}>📷 Камера</button><button class="sm" data-a="pickg" ${S.busy?'disabled':''}>🖼 Галерея</button></div>`;
 function phCard(o,k){const t=k==='receipt'?'Фото чека':'Фото готовой доставки',has=k==='receipt'?o.hasReceipt:o.hasDelivery,src=S.ph[o.id+':'+k];let b=`<div class="card"><b>${t}</b>`;
@@ -70,7 +70,9 @@ const QL={good:['Сумма позиций сошлась с итогом чек
 function ocrCard(){const o=S.ocr||{},d=S.d,r=d.ocrRes;let h=`<div class="card"><b>Распознавание</b>`;
  if(o.busy)h+=`<div class="mu" id="ocrstep">${esc(o.step||'Подготовка…')}</div><div class="bar"><i id="ocrbar" style="width:${Math.round((o.pct||0)*100)}%"></i></div><div class="r"><button class="sm" data-a="ocrstop">Остановить</button></div><div class="mu">Фото не отправляется на сервер. При первом запуске скачиваются файлы модели (нужен интернет), потом распознавание идёт на телефоне.</div>`;
  else{if(o.msg)h+=`<div class="mu">${esc(o.msg)}</div>`;
-  if(r)h+=`<div class="mu">Проходов: ${r.runs.length} · выбран «${esc(r.best)}» · ${Math.round(r.sec)} с · область: ${r.mode==='manual'?'ваша рамка':r.mode==='text-box'?'найдена автоматически':'весь кадр'}</div>`;
+  if(r)h+=r.engine&&r.engine!=='tesseract'?`<div class="mu">${esc(r.best)} · ${r.sec.toFixed(1)} с · строк: ${r.boxes||'—'}${r.rot?` · наклон ${r.rot}° исправлен`:''}${r.load&&r.load.loadMs?` · загрузка модели ${(r.load.loadMs/1000).toFixed(1)} с`:''}</div>`:`<div class="mu">Tesseract · проходов: ${r.runs.length} · выбран «${esc(r.best)}» · ${Math.round(r.sec)} с · область: ${r.mode==='manual'?'ваша рамка':r.mode==='text-box'?'найдена автоматически':'весь кадр'}</div>`;
+  if(r&&r.engine==='neural'&&d.quality!=='good')h+=`<div class="r"><button class="sm" data-a="ocrfb">Сверить резервным Tesseract (дольше)</button></div><div class="mu">Нейросеть не подтвердила итог чека или номер. Резервный проход Tesseract объединится с её результатом.</div>`;
+  if(d.ocrSrc)h+=`<div class="r"><span class="mu">Движок:</span><button class="sm ${S.engine==='neural'?'ok2':''}" data-a="eng" data-e="neural">Нейросеть</button><button class="sm ${S.engine==='tesseract'?'ok2':''}" data-a="eng" data-e="tesseract">Tesseract</button></div>`;
   h+=d.ocrSrc?`<div class="r"><button class="sm" data-a="ocr">Распознать заново</button><button class="sm" data-a="cropopen">✂ Обрезать и заново</button></div>`:'<div class="mu">Фото нет: введите позиции вручную.</div>';
   if(r)h+=`<div class="r"><button class="lnk" data-a="diag" style="padding:4px 0">Скопировать диагностику OCR</button></div>`}
  return h+'</div>'}
@@ -145,13 +147,22 @@ const decode=u=>new Promise((ok,no)=>{const i=new Image();i.onload=()=>{const c=
 function applyParse(d){const r=GP.parse(d.txt||'');fillFrom(d,r);return r}
 function fillFrom(d,p){if(p.no)d.no=p.no;d.ex=p.ex||d.ex||'';d.items=p.items.length?p.items.map(x=>({...x,cf:false})):[blank()];d.skipped=p.skipped;d.dropped=p.dropped;d.notes=p.notes||d.notes||'';d.warn=[...p.warn];d.quality=p.quality;d.warnOk=false;
  if(p.quality!=='good'&&!p.check)d.warn.push(p.items.length?'Итог чека не найден или не подтвердил сумму позиций: сверьте каждую позицию с фото.':'Позиции в тексте не найдены.');recheck(d)}
-function ocrProgress(run,ev){if(run.cancel)return;const o=S.ocr;o.pct=ev.pct||0;const ph=ev.phase==='variant'?`Проход ${ev.run} из ${ev.runs}: ${ev.label}`:ev.label||'Подготовка';o.step=ph+(ev.pct?` — ${Math.round(ev.pct*100)}%`:'');const a=$('#ocrstep'),b=$('#ocrbar');if(a)a.textContent=o.step;if(b)b.style.width=Math.round((ev.phase==='variant'?(((ev.run-1)+(ev.pct||0))/ev.runs):(ev.pct||0)*.2)*100)+'%'}
+function ocrProgress(run,ev){if(run.cancel)return;const o=S.ocr;o.pct=ev.pct||0;const ph=ev.phase==='variant'?`Проход ${ev.run} из ${ev.runs}: ${ev.label}`:ev.label||'Подготовка';o.step=ph+(ev.pct?` — ${Math.round(ev.pct*100)}%`:'');const a=$('#ocrstep'),b=$('#ocrbar');if(a)a.textContent=o.step;if(b)b.style.width=Math.round((ev.phase==='variant'?(((ev.run-1)+(ev.pct||0))/ev.runs):ev.phase==='neural-load'?(ev.pct||0)*.3:ev.phase==='neural-det'?.35:ev.phase==='neural-rec'?.4+(ev.pct||0)*.6:(ev.pct||0)*.2)*100)+'%'}
+/* 013: движок по умолчанию — нейросеть (Neural OCR). Tesseract 012 — резервный: выбирается вручную, по кнопке «Сверить резервным Tesseract»
+   или автоматически, только если нейросеть не загрузилась (нет интернета при первом запуске, старый браузер). */
 async function runOcr(opts){opts=opts||{};const d=S.d;if(!d||!d.ocrSrc||S.ocr.busy)return;const run={cancel:false};S.ocr={busy:true,run,step:'Подготовка…',pct:0,msg:''};if(S.v!=='rev')go('rev');else render();
- let res;try{const src=await decode(d.ocrSrc);res=await PIPE.recognizeReceipt(src,{recognize:(img,p,cb)=>OCR.recognize(img,p,cb),quad:opts.quad===undefined?(d.quad||null):opts.quad,match:n=>GPM.match(n,S.idx),onProgress:ev=>ocrProgress(run,ev),cancelled:()=>run.cancel})}
+ const match=n=>GPM.match(n,S.idx),quad=opts.quad===undefined?(d.quad||null):opts.quad,eng=opts.engine||S.engine;let res,note='';
+ const tess=src=>PIPE.recognizeReceipt(src,{recognize:(img,p,cb)=>OCR.recognize(img,p,cb),quad,match,onProgress:ev=>ocrProgress(run,ev),cancelled:()=>run.cancel});
+ try{const src=await decode(d.ocrSrc);
+  if(eng==='neural'&&window.NEURAL_WEB){try{const nr=await NEURAL_WEB.recognize(src,{quad,onProgress:ev=>ocrProgress(run,ev),cancelled:()=>run.cancel});if(nr.cancelled)res={cancelled:true};else{res=PIPE.fromNeural(nr,{match});res.load=nr.load;d.ocrNeural=res}}
+   catch(e){if(run.cancel)throw e;note=`Нейросеть недоступна (${e.message}) — использован Tesseract. `;res=await tess(src)}}
+  else if(eng==='fallback'&&d.ocrNeural){const t=await tess(src);if(t.cancelled)res=t;else{res=PIPE.mergeEngines(d.ocrNeural,t,{match});res.load=d.ocrNeural.load}}
+  else res=await tess(src)}
  catch(e){if(S.d!==d)return;S.ocr={msg:run.cancel?'Распознавание остановлено.':'Ошибка распознавания: '+e.message+'. Введите позиции вручную или повторите при наличии интернета.'};return render()}
  if(S.d!==d)return;if(res.cancelled||run.cancel){S.ocr={msg:'Распознавание остановлено.'};return render()}
- d.txt=res.best.text;d.box=res.locate.box||d.box||null;fillFrom(d,res.parsed);d.ocrRes={best:res.best.label,runs:res.runs,sec:res.totalMs/1000,mode:res.locate.mode,diag:PIPE.diagnostics(res,navigator.userAgent)};
- S.ocr={msg:res.parsed.items.length?'Готово. Проверьте номер, ID и позиции по фото: заказ автоматически не создаётся.':'Позиции не найдены.'};render()}
+ d.txt=res.best.text;d.box=res.locate.box||d.box||null;fillFrom(d,res.parsed);
+ d.ocrRes={best:res.best.label,runs:res.runs,sec:res.totalMs/1000,mode:res.locate.mode,engine:res.engine||'tesseract',boxes:res.locate.boxes,rot:res.locate.rot,load:res.load,diag:PIPE.diagnostics(res,navigator.userAgent)};
+ S.ocr={msg:note+(res.parsed.items.length?'Готово. Проверьте номер, ID и позиции по фото: заказ автоматически не создаётся.':'Позиции не найдены.')};render()}
 /* ---------- События ---------- */
 document.addEventListener('click',async e=>{const b=e.target.closest('[data-a]');if(!b)return;const a=b.dataset.a,i=+b.dataset.i,o=S.orders.find(x=>x.id===S.id),d=S.d;
  if(a==='home'){if(S.ocr.run)S.ocr.run.cancel=true;if(S.ocr.busy)OCR.cancel();S.ocr={};go('home')}else if(a==='dict')go('dict');else if(a==='scan')$('#fi').click();else if(a==='imp')$('#fd').click();
@@ -166,6 +177,8 @@ document.addEventListener('click',async e=>{const b=e.target.closest('[data-a]')
  else if(a==='yes'){if(!GPC.canFinish(o)){S.fin=false;toast(GPC.finishBlock(o),1);return render()}if(!DBX||!await DBX.putOrder({...o,done:true})){S.fin=false;toast('Завершение заказа НЕ сохранено',1);return render()}o.done=true;S.fin=false;go('home')}
  else if(a==='rm'){if(S.fin==='del'){if(!(DBX&&await DBX.deleteOrder(o.id))){S.fin=false;toast('Не удалось удалить заказ и фото',1);return render()}S.orders=S.orders.filter(x=>x!==o);delete S.ph[o.id+':receipt'];delete S.ph[o.id+':delivery'];go('home')}else{S.fin='del';render()}}
  else if(a==='ocr')runOcr();
+ else if(a==='ocrfb')runOcr({engine:'fallback'});
+ else if(a==='eng'){S.engine=b.dataset.e;try{localStorage.setItem('gp-engine',S.engine)}catch(e){}render()}
  else if(a==='ocrstop'){if(S.ocr.run)S.ocr.run.cancel=true;OCR.cancel()}
  else if(a==='cropopen')cropOpen();else if(a==='cropback'){go('rev')}
  else if(a==='cropreset'){CR.q=cropDefault();cropDraw()}

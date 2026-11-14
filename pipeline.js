@@ -1,4 +1,4 @@
-/* GONER PACK 012 (на базе 011): конвейер распознавания чека. Не зависит от DOM и от конкретного OCR-движка:
+/* GONER PACK 013 (на базе 012): конвейер распознавания чека. Не зависит от DOM и от конкретного OCR-движка:
    движок передаётся функцией recognize(img,{psm,tag},onPct) → {text,words:[{text,conf,x0,y0,x1,y1,line}]}.
    В браузере это Tesseract.js (ocr.js), в тестах — нативный Tesseract (tests/node-recognizer.js). */
 (function(r,f){const nd=typeof require==='function'&&typeof module==='object',m=f(nd?require('./imgproc.js'):r.IMG,nd?require('./parser.js'):r.GP,nd?require('./matcher.js'):r.GPM);if(typeof module==='object'&&module.exports)module.exports=m;else r.PIPE=m})(typeof self!=='undefined'?self:this,function(IMG,GP,GPM){
@@ -127,6 +127,14 @@ function combine(runs,o){o=o||{};const ranked=[...runs].sort((a,b)=>(b.parsed.qu
  if(!vn)parsed.warn.push('Номер предчека не найден ни в одном проходе: введите вручную по фото.');
  if(!parsed.ex)for(const r of runs)if(r.parsed.ex){parsed.ex=r.parsed.ex;break}
  return{best,parsed,merge:cons}}
+/* 013: результат Neural OCR → формат конвейера. Нейросеть только читает строки; позиции собирает тот же разбор 012 + справочник + проверка итога. */
+function fromNeural(nr,o){o=o||{};const p=GP.parse(nr.text),run={id:'neural',label:'Нейросеть PP-OCRv5',psm:0,ms:nr.ms.total,size:nr.size,nwords:nr.words.length,text:nr.text,src:'neural',parsed:p,score:(p.score||0)+1e6};
+ const C=combine([run],{match:o.match}),slim=({parsed,...r})=>({...r,no:parsed.no,ex:parsed.ex,quality:parsed.quality,items:parsed.items.length,skipped:parsed.skipped.length});
+ return{best:{id:'neural',label:run.label,text:nr.text},parsed:C.parsed,runs:[slim(run)],runsRaw:[run],merge:C.merge,locate:{mode:'neural',rot:nr.rot,boxes:nr.boxes,region:nr.region},log:[{id:'neural',ms:nr.ms,boxes:nr.boxes,calls:nr.calls}],totalMs:nr.ms.total,engine:'neural',
+  neural:{ms:nr.ms,rot:nr.rot,lines:nr.lines.map(l=>({t:l.text,c:+l.conf.toFixed(3),b:[l.x0,l.y0,l.x1,l.y1].map(Math.round)}))}}}
+/* нейросеть + резервный Tesseract: строки нейросети — опорный проход, проходы Tesseract голосуют в объединении 012 */
+function mergeEngines(nres,tres,o){o=o||{};const runs=[{...nres.runsRaw[0],score:1e6},...(tres.runsRaw||[])],C=combine(runs,{match:o.match});
+ return{best:{...nres.best,label:'Нейросеть + резервный Tesseract'},parsed:C.parsed,runs:[...nres.runs,...tres.runs],runsRaw:runs,merge:C.merge,locate:nres.locate,log:[...nres.log,...(tres.log||[])],totalMs:nres.totalMs+tres.totalMs,engine:'neural+tesseract',neural:nres.neural}}
 async function recognizeReceipt(src,o){o=o||{};const T0=Date.now(),log=[],P=o.onProgress||(()=>{}),cancelled=o.cancelled||(()=>false),maxRuns=o.maxRuns||4;
  const g=src.d.length===src.w*src.h*4?IMG.gray(src):src;let crop,locate={mode:'full',words:0},skew={deg:0,n:0},wordH=0,locWords=null,locBox=null;
  if(o.quad){P({phase:'crop',label:'Выпрямление по вашей рамке'});const w=IMG.warpQuad(g,o.quad,1600);if(!w)throw new Error('Рамка обрезки слишком мала или искажена');crop=w;locate={mode:'manual',words:0}}
@@ -159,7 +167,9 @@ async function recognizeReceipt(src,o){o=o||{};const T0=Date.now(),log=[],P=o.on
     parsed.no=parsed.no||'';parsed.tableFound=true;const dish=parsed.items.some(x=>x.kind==='dish');parsed.quality=dish&&parsed.check&&parsed.check.ok?'good':'ok';parsed.score=parsed.items.length*10+(parsed.check?(parsed.check.ok?50:-20):0)+20-parsed.skipped.length*3;
     runs.push({id:'table',label:'Проход по таблице',psm:6,ms:Date.now()-t0,size:[strip.w,strip.h],text:res.text,geoText:gl&&gl.text,src:useG?'geo':'text',parsed,score:parsed.score,tableOnly:true});log.push({id:'table',ms:Date.now()-t0,lines:tb.lines})}}catch(e){log.push({id:'table',error:String(e)})}}}
  const C=combine(runs,{match:o.match,hdrVotes}),best=C.best,parsed=C.parsed,cons=C.merge;
- return{best:{id:best.id,label:best.label,text:best.text},parsed,runs:runs.map(({parsed,_img,_gl,...r})=>({...r,no:parsed.no,ex:parsed.ex,quality:parsed.quality,items:parsed.items.length,skipped:parsed.skipped.length})),merge:cons,locate,log,totalMs:Date.now()-T0,scale:s0}}
-function diagnostics(res,meta){const L=['GONER PACK 012: диагностика распознавания',`Время: ${new Date().toISOString()}`,meta?`Устройство: ${meta}`:'',`Общее время: ${Math.round((res.totalMs||0)/1000)} с; область: ${JSON.stringify(res.locate||{})}`,`Выбран проход: ${res.best&&res.best.label}`,''];
- (res.runs||[]).forEach(r=>{L.push(`--- проход «${r.label}» (${r.id}, PSM ${r.psm}, ${Math.round(r.ms/1000)} с, ${r.size&&r.size.join('×')}): номер=${r.no||'—'} ID=${r.ex||'—'} позиций=${r.items} качество=${r.quality} слов с рамками=${r.nwords==null?'?':r.nwords} разбор=${r.src||'?'}`);L.push(r.text||'')});return L.filter(x=>x!==null).join('\n')}
-return{recognizeReceipt,combine,diagnostics,vote,weightedVotes,VARIANTS,TARGET_H,consensus,parseRun,tableBounds}});
+ return{best:{id:best.id,label:best.label,text:best.text},parsed,runsRaw:runs.map(({_img,_gl,...r})=>r),runs:runs.map(({parsed,_img,_gl,...r})=>({...r,no:parsed.no,ex:parsed.ex,quality:parsed.quality,items:parsed.items.length,skipped:parsed.skipped.length})),merge:cons,locate,log,totalMs:Date.now()-T0,scale:s0}}
+function diagnostics(res,meta){const L=['GONER PACK 013: диагностика распознавания',`Время: ${new Date().toISOString()}`,meta?`Устройство: ${meta}`:'',`Общее время: ${Math.round((res.totalMs||0)/1000)} с; область: ${JSON.stringify(res.locate||{})}`,`Выбран проход: ${res.best&&res.best.label}`,''];
+ (res.runs||[]).forEach(r=>{L.push(`--- проход «${r.label}» (${r.id}, PSM ${r.psm}, ${Math.round(r.ms/1000)} с, ${r.size&&r.size.join('×')}): номер=${r.no||'—'} ID=${r.ex||'—'} позиций=${r.items} качество=${r.quality} слов с рамками=${r.nwords==null?'?':r.nwords} разбор=${r.src||'?'}`);L.push(r.text||'')});
+ if(res.neural){const n=res.neural;L.push('',`--- нейросеть: поиск строк ${Math.round(n.ms.det)} мс, чтение ${Math.round(n.ms.rec)} мс, наклон ${n.rot}°; строки (уверенность, рамка x0,y0,x1,y1):`);n.lines.forEach(l=>L.push(`${l.c.toFixed(2)} [${l.b.join(',')}] ${l.t}`))}
+ return L.filter(x=>x!==null).join('\n')}
+return{recognizeReceipt,fromNeural,mergeEngines,combine,diagnostics,vote,weightedVotes,VARIANTS,TARGET_H,consensus,parseRun,tableBounds}});

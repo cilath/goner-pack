@@ -1,0 +1,30 @@
+/* GONER PACK 013: OCR LAB — сравнение Tesseract 012, Neural 013 и комбинированного результата на фото пользователя. */
+(()=>{const $=s=>document.querySelector(s),esc=s=>String(s==null?'':s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+ const idx=GPM.index(GPD.build(GP_SEED.items,[])),match=n=>GPM.match(n,idx),L={results:[],texts:{}};window.LAB=L;
+ $('#tr').onchange=()=>{$('#ctl').style.display=/custom|1042498/.test($('#tr').value)?'':'none'};
+ const st=(t,p)=>{$('#st').textContent=t;if(p!=null)$('#pb').style.width=Math.round(p*100)+'%'};
+ async function decode(file,max){const bm=await createImageBitmap(file,{imageOrientation:'from-image'}).catch(()=>createImageBitmap(file)),k=Math.min(1,(max||2400)/Math.max(bm.width,bm.height)),c=document.createElement('canvas');c.width=Math.round(bm.width*k);c.height=Math.round(bm.height*k);
+  const x=c.getContext('2d');x.drawImage(bm,0,0,c.width,c.height);const d=x.getImageData(0,0,c.width,c.height).data;return{w:c.width,h:c.height,d}}
+ function truth(){const v=$('#tr').value;if(!v)return null;if(v==='custom'||v==='1042498'){const t=LABSCORE.parseTruth($('#ct').value);return t.items.length?t:null}return LABTRUTHS[v]}
+ const sc=(p,ms,T)=>T?LABSCORE.score(p,T,{match,needsOk:GP.needsOk,ms}):{ms:Math.round(ms),rows:p.items.filter(x=>x.kind==='dish').length,manual:p.items.filter(x=>GP.needsOk({...x,st:x.kind==='cutlery'?'o':match(x.name).st},true)).length,total:!!(p.check&&p.check.ok)};
+ function table(T){const R=L.results;if(!R.length)return'';const b=T?Math.max(...R.map(r=>r.s.ok-r.s.qtyErr-r.s.extra.length-r.s.missed.length)):null;
+  const cell=(r,f)=>`<td class="n">${f(r.s)}</td>`,yes=v=>v?'✓':'✗';
+  return`<div class="card"><b>Результаты${T?'':' (без эталона)'}</b><table class="lt"><tr><th>Вариант</th><th>Время</th><th>Строк</th>${T?'<th>Верно</th><th>Ош. кол-ва</th><th>Пропущ.</th><th>Лишние</th>':''}<th>Ручн.</th><th>Итог</th>${T?'<th>№ / ID</th>':''}</tr>
+  ${R.map(r=>`<tr class="${T&&r.s.ok-r.s.qtyErr-r.s.extra.length-r.s.missed.length===b?'best':''}"><td>${esc(r.name)}</td>${cell(r,s=>(s.ms/1000).toFixed(1)+' с')}${cell(r,s=>s.rows)}${T?cell(r,s=>s.ok+' из '+s.want)+cell(r,s=>s.qtyErr)+cell(r,s=>s.missed.length)+cell(r,s=>s.extra.length):''}${cell(r,s=>s.manual)}${cell(r,s=>yes(s.total))}${T?cell(r,s=>yes(s.no)+' / '+yes(s.ex)):''}</tr>`).join('')}</table>
+  <div class="mu">«Верно» — позиция найдена и совпала со справочником или эталоном. «Ручн.» — позиций, требующих подтверждения или исправления. Эталон в распознавание не передаётся.</div>
+  ${T?R.map(r=>(r.s.missed.length||r.s.extra.length||r.s.qtyBad.length)?`<div class="mu" style="margin-top:6px"><b>${esc(r.name)}:</b>${r.s.missed.length?' пропущены: '+esc(r.s.missed.join('; ')):''}${r.s.extra.length?' · лишние/не узнаны: '+esc(r.s.extra.join('; ')):''}${r.s.qtyBad.length?' · количество: '+esc(r.s.qtyBad.join('; ')):''}</div>`:'').join(''):''}
+  <div class="r"><button class="sm" id="cp">Скопировать результаты</button></div></div>
+  ${R.map(r=>`<details class="card"><summary>Текст: ${esc(r.name)}</summary><pre class="tx">${esc(r.text)}</pre><div class="mu">Позиции: ${esc(r.p.items.map(x=>x.qty+'× '+x.name).join(' | '))}</div></details>`).join('')}`}
+ function show(){const T=truth();L.results.forEach(r=>r.s=sc(r.p,r.ms,T));$('#out').innerHTML=table(T);const b=$('#cp');if(b)b.onclick=async()=>{const t=['GONER PACK 013 · OCR LAB',navigator.userAgent,'эталон: '+($('#tr').value||'нет'),...L.results.map(r=>r.name+': '+JSON.stringify(r.s)),...(L.neuralInfo?['нейросеть: '+JSON.stringify(L.neuralInfo)]:[])].join('\n');try{await navigator.clipboard.writeText(t);st('Скопировано')}catch(e){prompt('Скопируйте:',t)}}}
+ $('#go').onclick=async()=>{const f=$('#ph').files[0];if(!f)return st('Выберите фото чека');$('#go').disabled=true;L.results=[];$('#out').innerHTML='';
+  try{const src=await decode(f,2400);let nres=null,tres=null;
+   if($('#e2').checked||$('#e3').checked){st('Neural 013…',0);const t0=performance.now();try{const nr=await NEURAL_WEB.recognize(src,{onProgress:e=>st(e.label||'Нейросеть',e.phase==='neural-rec'?.4+(e.pct||0)*.6:e.phase==='neural-load'?(e.pct||0)*.3:.35)});L.neuralInfo={...nr.ms,load:nr.load,boxes:nr.boxes,rot:nr.rot};
+     nres=PIPE.fromNeural(nr,{match});if($('#e2').checked)L.results.push({name:'Neural 013',p:nres.parsed,ms:performance.now()-t0-((nr.load&&nr.load.loadMs)||0),text:nr.text})}catch(e){L.results.push({name:'Neural 013 — ошибка: '+e.message,p:{items:[]},ms:0,text:String(e.stack||e)})}show()}
+   if($('#e1').checked||$('#e3').checked){st('Tesseract 012…',0);const t0=performance.now();tres=await PIPE.recognizeReceipt(src,{recognize:(img,p,cb)=>OCR.recognize(img,p,cb),match,onProgress:e=>st(e.label||'Tesseract',e.phase==='variant'?((e.run-1)+(e.pct||0))/e.runs:null)});if($('#e1').checked)L.results.push({name:'Tesseract 012',p:tres.parsed,ms:performance.now()-t0,text:tres.best.text})}
+   if($('#e3').checked&&nres&&tres){const m=PIPE.mergeEngines(nres,tres,{match});L.results.push({name:'Комбинированный',p:m.parsed,ms:nres.totalMs+tres.totalMs,text:nres.best.text})}
+   st('Готово',1);show()}catch(e){st('Ошибка: '+e.message)}finally{$('#go').disabled=false}};
+ /* разбор вставленной диагностики (тексты проходов Tesseract) — без повторного распознавания */
+ function loadDiag(t){const runs=[];let cur=null;for(const l of String(t).split(/\r?\n/)){const m=l.match(/^--- проход «([^»]+)» \((\w+), PSM (\d+)/);if(m){cur={label:m[1],id:m[2],text:[]};runs.push(cur);continue}if(/^--- нейросеть/.test(l)){cur=null;continue}if(cur)cur.text.push(l)}return runs.map(r=>({...r,text:r.text.join('\n')}))}
+ $('#dgo').onclick=()=>{const R=loadDiag($('#dg').value);if(!R.length)return st('В тексте нет проходов OCR');const runs=R.map(r=>{const p=r.id==='table'?GP.parseTable(r.text):GP.parse(r.text);return{id:r.id,label:r.label,parsed:p,score:r.id==='neural'?1e6:p.score,tableOnly:r.id==='table'}});
+  const C=PIPE.combine(runs,{match});L.results=[{name:`По диагностике (${R.map(r=>r.id).join(', ')})`,p:C.parsed,ms:0,text:R.map(r=>'['+r.label+']\n'+r.text).join('\n\n')}];st('Диагностика разобрана',1);show()};
+})();

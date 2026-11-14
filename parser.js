@@ -30,7 +30,10 @@ function nameish(l){if(String(l).split(/\s+/).some(x=>x.length>=8&&(x.match(/[а
 /* слова шапки/рекламы: название ресторана, «онлайн-касса», «японская & европейская кухня» — не могут быть частью названия блюда */
 const hdrish=l=>has(l,'кухня',1)||has(l,'европейская',3)||has(l,'касса',1)||has(l,'онлайн',2)||has(l,'евразия',2)||/&/.test(l);
 const money=l=>{const m=[...l.matchAll(/(\d{1,6}[.,]\d{2})(?!\d)/g)];return m.length?parseFloat(m[m.length-1][1].replace(',','.')):null};
-const pickNo=l=>{const m=[...l.matchAll(/(?<![\d.:,])\d{4,10}(?![\d]|[.:,]\d)/g)].map(x=>x[0]);if(m.length)return m.sort((a,b)=>b.length-a.length)[0];const s=l.match(/(\d[\d ]{3,12}\d)(?![.:]\d)/);return s&&!/[.:]/.test(l)?s[1].replace(/ /g,''):''};
+/* 013: нейросеть иногда ставит в номере похожую букву вместо цифры («104З362», «1О4З362»): в токенах, где ≥4 цифр, буквы-двойники заменяются цифрами */
+const DIG={'О':'0','о':'0','O':'0','o':'0','З':'3','з':'3','б':'6','Б':'6','I':'1','l':'1','|':'1','В':'8','B':'8','S':'5','Ч':'4'};
+const digFix=l=>String(l).replace(/[0-9ОоOoЗзбБIl|ВBSЧ]{6,12}/g,t=>(t.match(/\d/g)||[]).length>=4?t.replace(/[^0-9]/g,c=>DIG[c]||c):t);
+const pickNo=l=>{l=digFix(l);const m=[...l.matchAll(/(?<![\d.:,])\d{4,10}(?![\d]|[.:,]\d)/g)].map(x=>x[0]);if(m.length)return m.sort((a,b)=>b.length-a.length)[0];const s=l.match(/(\d[\d ]{3,12}\d)(?![.:]\d)/);return s&&!/[.:]/.test(l)?s[1].replace(/ /g,''):''};
 /* Строка таблицы: якорь — ближайшая к правому краю пара «количество + сумма с 2 знаками» (или «количество, цена, сумма»).
    Всё правее якоря считается шумом OCR (рамка, фон), всё левее — названием. */
 const PFX=/^[{(\[‚,'`"«‘’„|\\]+/;
@@ -75,7 +78,7 @@ function rowOf(l){const t=l.split(' ').filter(Boolean),F=t.map(x=>fixTok(x.repla
  let k=0;while(k<3&&k<t.length&&F[t.length-1-k]!==null)k++;
  if(!k)return{kind:'text'};return{kind:k===1?'one':'bad'}}
 function parse(text,meta){
- const RL=String(text).split(/\r?\n/).filter(s=>s.trim()),L=RL.map(s=>s.replace(/\s+/g,' ').trim()),U=new Set(),out={no:'',ex:'',notes:'',items:[],skipped:[],dropped:[],warn:[],check:null,quality:'bad',score:0,tableFound:false};
+ const RL=String(text).split(/\r?\n/).filter(s=>s.trim()).map(digFix),L=RL.map(s=>s.replace(/\s+/g,' ').trim()),U=new Set(),out={no:'',ex:'',notes:'',items:[],skipped:[],dropped:[],warn:[],check:null,quality:'bad',score:0,tableFound:false};
  /* 1. номер: допускаем ошибки OCR в «ПРЕДЧЕК АДМИН №» */
  let ni=L.findIndex(l=>has(l,'предчек',2)||(has(l,'админ',1)&&/\d/.test(l)));if(ni<0)ni=L.findIndex(l=>has(l,'предчек',3)||has(l,'админ',2));
  if(ni>=0){out.no=pickNo(L[ni])||(/время/.test(cyr(L[ni+1]||''))?'':pickNo(L[ni+1]||''));U.add(ni)}
@@ -102,7 +105,7 @@ function parse(text,meta){
  function tclean(raw){let x=String(raw).trim();const bar=x.match(/^(.{0,8}?)\|\s*(.+)$/);if(bar&&letters(bar[1])<=3)x=bar[2];
   const seg=x.split(/\s{3,}/);if(seg.length>1&&letters(seg[0])<=3&&!/\d[.,]\d/.test(seg[0])&&letters(seg.slice(1).join(' '))>=4)x=seg.slice(1).join('   ');return x.replace(/\s+/g,' ').trim()}
  /* продолжение названия на следующей строке: «СЫРНОМ СОУСЕ», «в сырном соусе», «(5 шт)». Без чисел, не мусор, не шапка. */
- function contOf(raw,pn){const ps=String(raw).match(/\(\s*(\d{1,2})\s*(?:шт|ШТ|Шт)\.?\s*\)?/);if(ps&&letters(String(raw).replace(ps[0],''))<=4)return`(${ps[1]} шт)`;
+ function contOf(raw,pn){const ps=String(raw).match(/\(\s*(\d{1,2})\s*(?:шт|ШТ|Шт|[ТтTШш]{1,2})\.?\s*\)?/);if(ps&&letters(String(raw).replace(ps[0],''))<=4)return`(${ps[1]} шт)`;
   const segs=String(raw).split(/\s{3,}/).map(z=>z.trim()).filter(Boolean);let seg=segs.find(z=>nameish(z.replace(/^\S{1,3}\s+(?=\S{3})/,'')));if(!seg)return'';
   let w=seg.split(/\s+/);const PRE=/^(в|во|с|со|на|из|и|без)$/i;
   while(w.length&&!PRE.test(w[0])&&(letters(w[0])<3||/[^а-яёa-z.,]/i.test(w[0].replace(/[.,]$/,''))))w.shift();
@@ -169,4 +172,4 @@ function validate(d,on){const er=[];if(!/^\d+$/.test(String(d.no||'').trim()))er
 /* номер предчека из короткого текста (полоса заголовка): строка со словом «предчек/админ», иначе единственное длинное число */
 function numberFrom(text){const L=String(text).split(/\r?\n/).map(x=>x.replace(/\s+/g,' ').trim()).filter(Boolean),i=L.findIndex(l=>has(l,'предчек',3)||has(l,'админ',2));if(i>=0){const n=pickNo(L[i]);if(n)return n}
  const c=L.filter(l=>!/время|дата|\d{2}\.\d{2}\.\d{2,4}/i.test(l)).map(pickNo).filter(n=>/^\d{6,8}$/.test(n));return c.length===1?c[0]:''}
-return{cutName,nameish,hdrish,hard,parse,parseTable,linesFromWords,isTH,isTot,isPay,validate,needsOk,norm,intQty,lev,numberFrom,has,cyr}});
+return{digFix,cutName,nameish,hdrish,hard,parse,parseTable,linesFromWords,isTH,isTot,isPay,validate,needsOk,norm,intQty,lev,numberFrom,has,cyr}});

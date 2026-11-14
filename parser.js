@@ -1,4 +1,4 @@
-/* GONER PACK 009: разбор текста чека по блокам (шапка / приборы / «повару» / таблица / итоги / реклама).
+/* GONER PACK 010 (на базе 009): разбор текста чека по блокам (шапка / приборы / «повару» / таблица / итоги / реклама).
    Работает в браузере (window.GP) и в Node (тесты). Позиции берутся ТОЛЬКО из таблицы между
    заголовком «Наименование / Кол-во / Сумма» и первой строкой итогов; всё остальное не может стать блюдом. */
 (function(root,f){const m=f();if(typeof module==='object'&&module.exports)module.exports=m;else root.GP=m})(typeof self!=='undefined'?self:this,function(){
@@ -21,7 +21,7 @@ const isTot=l=>has(l,'итог',1)||has(l,'итого',1)||(has(l,'сумма',2
 const cutName=l=>{const w=words(l);for(const[k,n]of[['палочки','Палочки'],['палочка','Палочки'],['ложки','Ложки'],['ложка','Ложки'],['вилки','Вилки'],['вилка','Вилки'],['ножи','Ножи'],['приборы','Приборы'],['прибор','Приборы']])if(w.some(x=>Math.abs(x.length-k.length)<=2&&lev(x,k)<=(k.length>5?2:1)))return n;return''};
 const sentence=s=>{const t=s.trim();if(!t)return t;const odd=t.split(' ').some(w=>/[а-яёa-z]/.test(w.slice(1))&&/[А-ЯЁA-Z]/.test(w.slice(1))),allUp=t===t.toUpperCase()&&/[А-ЯЁ]{3}/.test(t),mix=/[а-яё]/.test(t)&&t.split(' ').some(w=>/^[А-ЯЁ]{3,}$/.test(w));return odd||allUp||mix?t.charAt(0).toUpperCase()+t.slice(1).toLowerCase():t};
 const glyph=s=>s.replace(/(^|\s)\((?=[а-яё]{2})/gi,(m,a)=>a+'С');
-const lead=s=>{const t=s.split(' ');let k=0;while(k<t.length-1&&k<5&&letters(t[k])<3&&t.slice(k+1).some(x=>letters(x)>=3))k++;return{name:t.slice(k).join(' '),cut:k>0}};
+const lead=s=>{const t=s.split(' ');let k=0;while(k<t.length-1&&k<5&&(letters(t[k])<2||letters(t[k])<3&&/[^а-яёa-z]/i.test(t[k]))&&t.slice(k+1).some(x=>letters(x)>=3))k++;return{name:t.slice(k).join(' '),cut:k>0}};
 const clean=s=>s.replace(/^[^а-яёa-z0-9«"(]+|[^а-яёa-z0-9»")]+$/gi,'').replace(/\s+/g,' ').trim();
 const money=l=>{const m=[...l.matchAll(/(\d{1,6}[.,]\d{2})(?!\d)/g)];return m.length?parseFloat(m[m.length-1][1].replace(',','.')):null};
 const pickNo=l=>{const m=[...l.matchAll(/(?<![\d.:,])\d{4,10}(?![\d]|[.:,]\d)/g)].map(x=>x[0]);if(m.length)return m.sort((a,b)=>b.length-a.length)[0];const s=l.match(/(\d[\d ]{3,12}\d)(?![.:]\d)/);return s&&!/[.:]/.test(l)?s[1].replace(/ /g,''):''};
@@ -87,14 +87,27 @@ function parse(text){
  if(th>=0&&cand.length&&rows.length){const ok=cand.some(v=>near(sum,v,.02));out.check={sum:+sum.toFixed(2),total:ok?+sum.toFixed(2):+best[0],readings:cand,ok};
   if(!ok)out.warn.push(`Сумма позиций ${sum.toFixed(2)} не сходится с итогом чека (прочитано: ${[...new Set(cand.map(v=>v.toFixed(2)))].join(', ')}). Возможно, потеряна строка или неверно прочитана цифра. Сверьте с фото.`)}
  /* 7. объединение повторов */
- const mg=[];out.items.forEach(x=>{const key=x.kind+norm(x.name),y=mg.find(z=>z.key===key);if(y){y.qty+=x.qty;x.doubt.forEach(d=>y.doubt.includes(d)||y.doubt.push(d))}else mg.push({...x,key})});
- out.items=mg.map(({key,sum,...r})=>r).sort((a,b)=>(a.kind==='cutlery')-(b.kind==='cutlery'));
+ const mg=[];out.items.forEach(x=>{const key=x.kind+norm(x.name),y=mg.find(z=>z.key===key);if(y){y.qty+=x.qty;y.sum=+((y.sum||0)+(x.sum||0)).toFixed(2);x.doubt.forEach(d=>y.doubt.includes(d)||y.doubt.push(d))}else mg.push({...x,key})});
+ out.items=mg.map(({key,...r})=>r).sort((a,b)=>(a.kind==='cutlery')-(b.kind==='cutlery'));
  out.dropped=L.filter((l,i)=>!U.has(i));
  const dish=out.items.some(x=>x.kind==='dish');
  out.quality=out.no&&out.tableFound&&dish&&out.check&&out.check.ok?'good':out.no&&out.items.length?'ok':'bad';
  out.score=(out.no?40:0)+(out.tableFound?20:0)+out.items.length*10+(out.check?(out.check.ok?50:-20):0)+(out.ex?10:0)-out.skipped.length*3;
  return out}
-const needsOk=(x,on)=>!!((x.doubt&&x.doubt.length)||(on&&x.kind!=='cutlery'&&x.st!=='o'));
+/* Пересборка строк по геометрии слов: слова одной визуальной строки (близкий y) склеиваются слева направо,
+   даже если OCR разнёс их по разным строкам/блоками (так теряются количество и сумма рядом с названием). */
+function linesFromWords(words){const W=(words||[]).filter(w=>w&&String(w.text).trim()&&w.y1>w.y0&&w.x1>w.x0);if(!W.length)return{text:'',lines:[],H:0};
+ const hs=W.map(w=>w.y1-w.y0).sort((a,b)=>a-b),H=hs[hs.length>>1]||10,lines=[];
+ for(const w of[...W].sort((a,b)=>(a.y0+a.y1)-(b.y0+b.y1))){const yc=(w.y0+w.y1)/2,big=w.y1-w.y0>=.6*H,L=lines[lines.length-1];
+  if(L&&Math.abs(yc-L.yc)<=.62*H){L.w.push(w);if(big){L.n++;L.yc+=(yc-L.yc)/L.n}}else lines.push({w:[w],yc,n:big?1:0.5})}
+ lines.forEach(L=>{L.w.sort((a,b)=>a.x0-b.x0);L.x0=L.w[0].x0;L.x1=Math.max(...L.w.map(x=>x.x1));L.y0=Math.min(...L.w.map(x=>x.y0));L.y1=Math.max(...L.w.map(x=>x.y1));L.text=L.w.map(x=>String(x.text).trim()).join(' ')});
+ return{text:lines.map(l=>l.text).join('\n'),lines,H}}
+/* разбор текста одной таблицы (проход по полосе между заголовком и итогами): добавляем служебные строки, чтобы действовали все правила таблицы */
+const parseTable=text=>parse('Наименование Кол-во Сумма\n'+String(text||'').trim()+'\nИтого');
+/* «мягкие» пометки (перенос названия, очистка начала строки, разные прочтения названия) не требуют подтверждения, если название найдено в справочнике */
+const SOFT=/^(перенос названия|начало строки очищено|проходы OCR прочитали название по-разному|цифры исправлены|символ «\(» заменён|справа от суммы есть лишний текст)/;
+const hard=x=>(x.doubt||[]).filter(d=>!(x.st==='o'&&SOFT.test(d)));
+const needsOk=(x,on)=>!!(hard(x).length||(on&&x.kind!=='cutlery'&&x.st!=='o'));
 function validate(d,on){const er=[];if(!/^\d+$/.test(String(d.no||'').trim()))er.push('Укажите номер предчека (только цифры)');
  if(String(d.ex||'').trim()&&!/^\d+$/.test(String(d.ex).trim()))er.push('Дополнительный ID: только цифры');
  if(!d.items.length)er.push('Добавьте хотя бы одну позицию');
@@ -105,4 +118,4 @@ function validate(d,on){const er=[];if(!/^\d+$/.test(String(d.no||'').trim()))er
 /* номер предчека из короткого текста (полоса заголовка): строка со словом «предчек/админ», иначе единственное длинное число */
 function numberFrom(text){const L=String(text).split(/\r?\n/).map(x=>x.replace(/\s+/g,' ').trim()).filter(Boolean),i=L.findIndex(l=>has(l,'предчек',3)||has(l,'админ',2));if(i>=0){const n=pickNo(L[i]);if(n)return n}
  const c=L.filter(l=>!/время|дата|\d{2}\.\d{2}\.\d{2,4}/i.test(l)).map(pickNo).filter(n=>/^\d{6,8}$/.test(n));return c.length===1?c[0]:''}
-return{parse,validate,needsOk,norm,intQty,lev,numberFrom,has,cyr}});
+return{hard,parse,parseTable,linesFromWords,isTH,isTot,isPay,validate,needsOk,norm,intQty,lev,numberFrom,has,cyr}});

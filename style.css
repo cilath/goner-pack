@@ -54,3 +54,5 @@ textarea{min-height:90px;resize:vertical}
 .stk img{height:26vh;max-width:70%;object-fit:contain;background:#000;border-radius:12px;cursor:zoom-in}
 .cropw{touch-action:none;margin-bottom:8px}.cropw canvas{display:block;border-radius:12px;touch-action:none;max-width:100%}
 details.card summary{font-weight:600;cursor:pointer}
+
+.tg.b{color:var(--bd)}.srch{background:var(--a2);border-radius:12px;padding:10px;margin-top:8px}.srch input,.srch textarea{margin-bottom:6px}.res{padding:10px 8px;border-bottom:1px solid #0001;cursor:pointer}.res:active{background:#fff8}

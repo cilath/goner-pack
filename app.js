@@ -1,5 +1,5 @@
 const $=s=>document.querySelector(s),esc=s=>String(s??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
-const S={orders:[],dict:[],v:'home',id:null,d:null,ds:'',dn:'',fin:false,photoOpen:false,ocr:{},msg:'',ph:{},viewer:null,pick:null,repl:0,phErr:null,saveErr:'',busy:false};const DAY=864e5,norm=GP.norm;
+const S={orders:[],dict:[],recs:[],idx:[],srch:null,edit:null,ddk:null,dr:false,dcat:'',v:'home',id:null,d:null,ds:'',dn:'',fin:false,photoOpen:false,ocr:{},msg:'',ph:{},viewer:null,pick:null,repl:0,phErr:null,saveErr:'',busy:false};const DAY=864e5,norm=GP.norm;
 function toast(m,bad){const t=$('#toast');t.textContent=m;t.className='toast on'+(bad?' bad':'');clearTimeout(toast.h);toast.h=setTimeout(()=>t.className='toast',bad?8000:3000)}
 /* ---------- IndexedDB (V008: orders + photos + dict, схема v2; логика в db.js) ---------- */
 let DBX=null,dbErr='';
@@ -7,17 +7,22 @@ async function initDB(){try{DBX=await DB.open()}catch(e){DBX=null;dbErr=(e&&e.me
 async function saveOrder(o){if(!DBX||!await DBX.putOrder(o)){toast('Прогресс заказа НЕ сохранён в память телефона',1);return false}return true}
 async function cleanup(){if(!DBX)return;const ids=await DBX.expire(Date.now());if(!ids.length)return;S.orders=S.orders.filter(o=>!ids.includes(o.id));ids.forEach(id=>{delete S.ph[id+':receipt'];delete S.ph[id+':delivery']});if(S.viewer&&ids.includes(S.viewer.id))S.viewer=null;if(S.v==='order'&&!S.orders.find(o=>o.id===S.id))S.v='home';render()}
 const newId=()=>{let i=Date.now();while(S.orders.some(x=>x.id===i))i++;return i};
-/* ---------- Справочник ---------- */
-function lev(a,b){const m=a.length,n=b.length;let p=Array.from({length:n+1},(_,j)=>j);for(let i=1;i<=m;i++){const c=[i];for(let j=1;j<=n;j++)c[j]=Math.min(p[j]+1,c[j-1]+1,p[j-1]+(a[i-1]===b[j-1]?0:1));p=c}return p[n]}
-function match(name){const n=norm(name);if(!n||!S.dict.length)return{st:'u'};let best=null,bs=0,sc=0;for(const d of S.dict){if(d.k===n)return{st:'o',name:d.n};const s=1-lev(n,d.k)/Math.max(n.length,d.k.length);if(s>bs){sc=bs;bs=s;best=d}else if(s>sc)sc=s}
- /* похожие названия НЕ объединяются автоматически: только подсказка */
- return best&&bs>=.8&&bs-sc>=.05?{st:'s',name:best.n}:{st:'u'}}
-const recheck=d=>d.items.forEach(x=>{if(x.kind==='cutlery'){x.st='o';return}const m=match(x.name);x.st=m.st;x.sug=m.name;if(m.st==='o')x.name=m.name});
-async function addDict(name){name=name.trim();const k=norm(name);if(!k||S.dict.some(d=>d.k===k))return;const o={k,n:name};S.dict.push(o);if(!(DBX&&await DBX.putDict(o)))toast('Справочник не сохранился',1)}
-async function importDict(f){let rows=[];try{if(/\.(xlsx|xls)$/i.test(f.name)){if(!window.XLSX)throw Error('библиотека Excel не загрузилась (нужен интернет)');const wb=XLSX.read(await f.arrayBuffer());rows=XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]],{header:1})}else rows=(await f.text()).split(/\r?\n/).map(l=>l.split(/[;\t,]/))}catch(e){S.msg='Не удалось прочитать файл: '+esc(e.message);return render()}
- let c=0;const R=/назван|блюд|наимен|name/i,h=rows.findIndex(r=>r.some(x=>R.test(x)));if(h>=0)c=rows[h].findIndex(x=>R.test(x));
- const a=[];rows.slice(h+1).forEach(r=>{const n=String(r[c]??'').trim(),k=norm(n);if(n&&k&&isNaN(n)&&!a.some(x=>x.k===k)&&!S.dict.some(x=>x.k===k))a.push({k,n})});
- const ok=!!DBX&&await DBX.putDictMany(a);if(ok)S.dict.push(...a);else toast('Справочник не сохранился',1);S.msg=ok?`Добавлено блюд: ${a.length}. Колонка: ${h>=0?'«'+esc(rows[h][c])+'»':'первая'}.`:'';render()}
+/* ---------- Справочник (010): встроенная база (dict-seed.js) + локальные правки в IndexedDB; сопоставление — matcher.js ---------- */
+function rebuildDict(){S.dict=GPD.build(GP_SEED.items,S.recs||[]).sort((a,b)=>a.n.localeCompare(b.n,'ru'));S.idx=GPM.index(S.dict)}
+const seedKeys=new Set(GP_SEED.items.map(x=>GPD.key(x.n)));
+/* статус позиции: o — в справочнике (подтверждать не нужно), s — похоже, нужен один тап, u — нет в справочнике; исходный текст OCR хранится в x.ocr */
+function recheck(d){d.items.forEach(x=>{if(x.kind==='cutlery'){x.st='o';return}
+ if(x.ocr===undefined)x.ocr=x.name;const m=GPM.match(x.name,S.idx);x.st=m.st;x.how=m.how;x.gb=GPM.garbled(x.ocr||x.name);
+ x.cand=m.st==='o'?[]:(m.alts||[]).filter(a=>a.score>=(m.st==='s'?.6:.62)).map(a=>a.n).slice(0,3);x.sug=m.st==='s'?m.name:'';
+ if(m.st==='o'&&m.name!==x.name){x.fixed=x.name;x.name=m.name}})}
+async function dictPut(rec){if(DBX&&await DBX.putDict(rec)){S.recs=(S.recs||[]).filter(r=>r.k!==rec.k);S.recs.push(rec);rebuildDict();return true}toast('Справочник не сохранился',1);return false}
+async function dictDrop(k){const ok=seedKeys.has(k)?await DBX.putDict({k,del:true}):await DBX.delDict(k);if(!ok)return toast('Справочник не сохранился',1),false;S.recs=(S.recs||[]).filter(r=>r.k!==k);if(seedKeys.has(k))S.recs.push({k,del:true});rebuildDict();return true}
+async function addDict(name,cat){name=GPD.clean(name);const k=GPD.key(name);if(!k)return false;if(S.dict.some(x=>x.k===k)){toast('Такое блюдо уже есть в справочнике',1);return false}return dictPut({k,n:name,c:GPD.clean(cat),a:[],src:'user'})}
+async function importDict(f){let r;try{r=await GPD.parseFile(f.name,await f.arrayBuffer())}catch(e){S.msg='Не удалось прочитать файл: '+esc(e.message);return render()}
+ const m=GPD.merge(S.dict,r.items);if(m.save.length&&!(DBX&&await DBX.putDictMany(m.save))){S.msg='';toast('Справочник не сохранился',1);return render()}
+ m.save.forEach(x=>{S.recs=(S.recs||[]).filter(y=>y.k!==x.k);S.recs.push(x)});rebuildDict();
+ S.msg=`Прочитано листов: ${r.info.length} (${r.info.map(x=>`«${esc(x.sheet)}»: ${x.rows}`).join(', ')}). Добавлено блюд: ${m.added}, дополнено (алиасы, раздел): ${m.updated}, уже были: ${m.same}.`;render()}
+function exportDict(){const b=new Blob([GPD.toCSV(S.dict)],{type:'text/csv;charset=utf-8'}),a=document.createElement('a');a.href=URL.createObjectURL(b);a.download='goner-pack-spravochnik.csv';document.body.appendChild(a);a.click();setTimeout(()=>{URL.revokeObjectURL(a.href);a.remove()},4000);toast('Справочник сохранён в файл')}
 /* ---------- Заказы ---------- */
 const tot=o=>o.items.reduce((a,i)=>a+i.q,0),got=o=>o.items.reduce((a,i)=>a+i.g,0),left=GPC.left;
 const stt=GPC.status;
@@ -29,6 +34,7 @@ function card(o){const[s,c]=stt(o);return`<div class="card" data-a="open" data-i
 function vHome(){const L=[...S.orders].sort((a,b)=>(a.done-b.done)||b.t-a.t);
  return`<div class="top"><h1>GONER PACK</h1><button class="ib2" data-a="dict">Справочник · ${S.dict.length}</button></div>${DBX?'':`<div class="bn">Память телефона (IndexedDB) недоступна${dbErr?': '+esc(dbErr):''}. Создать заказ нельзя: он не сохранится.</div>`}
  ${L.length?L.map(card).join(''):'<div class="emp">Заказов пока нет.<br>Нажмите «Сканировать чек»: фото распознаётся на телефоне, затем вы проверяете позиции.</div>'}
+ <div class="mu" style="text-align:center;margin-top:14px">Версия 010 · справочник ${S.dict.length}</div>
  <div class="fab"><button class="big" data-a="scan">📷 Сканировать чек</button><button class="lnk" data-a="manual">Ввести вручную</button></div>`}
 const pickBtns=()=>`<div class="r"><button class="sm" data-a="pickc" ${S.busy?'disabled':''}>📷 Камера</button><button class="sm" data-a="pickg" ${S.busy?'disabled':''}>🖼 Галерея</button></div>`;
 function phCard(o,k){const t=k==='receipt'?'Фото чека':'Фото готовой доставки',has=k==='receipt'?o.hasReceipt:o.hasDelivery,src=S.ph[o.id+':'+k];let b=`<div class="card"><b>${t}</b>`;
@@ -68,7 +74,20 @@ function ocrCard(){const o=S.ocr||{},d=S.d,r=d.ocrRes;let h=`<div class="card"><
   h+=d.ocrSrc?`<div class="r"><button class="sm" data-a="ocr">Распознать заново</button><button class="sm" data-a="cropopen">✂ Обрезать и заново</button></div>`:'<div class="mu">Фото нет: введите позиции вручную.</div>';
   if(r)h+=`<div class="r"><button class="lnk" data-a="diag" style="padding:4px 0">Скопировать диагностику OCR</button></div>`}
  return h+'</div>'}
-function vRev(){const d=S.d,on=S.dict.length>0,er=GP.validate(d,on),o=S.ocr||{},q=d.quality&&QL[d.quality],dr=(d.dropped||[]).filter(l=>/[а-яё]{3}/i.test(l)&&l.replace(/[^а-яёa-z0-9]/gi,'').length>=6);
+function revSummary(d){const L=d.items.filter(x=>x.kind!=='cutlery'),ok=L.filter(x=>x.st==='o').length,chk=d.items.filter(x=>GP.needsOk(x,true)&&!x.cf).length,bulk=d.items.filter(x=>x.st==='u'&&!x.gb&&!x.cf&&!GP.hard(x).length&&x.kind!=='cutlery').length;
+ return L.length?`<div class="card ${chk?'wn':'ok2'}"><b>Блюд: ${L.length} · в справочнике: ${ok} · нужна проверка: ${chk}</b>${bulk>=2?`<div class="r"><button class="sm" data-a="cfall">Оставить как есть все, которых нет в справочнике (${bulk})</button></div>`:''}</div>`:''}
+function itemCard(x,k){const need=GP.needsOk(x,true),hd=GP.hard(x),cut=x.kind==='cutlery',pk=S.srch&&S.srch.i===k;
+ const tag=cut?'<span class="tg o">Прибор</span>':x.st==='o'?'<span class="tg o">✓ В справочнике</span>':x.st==='s'?'<span class="tg s">Похоже на запись справочника</span>':x.gb?'<span class="tg u">Похоже на ошибку распознавания</span>':'<span class="tg u">Нет в справочнике</span>';
+ const was=x.fixed&&GPM.tokens(x.fixed).join('')!==GPM.tokens(x.name).join('')?`<div class="mu">Распознано: «${esc(x.fixed)}» → исправлено по справочнику</div>`:'';
+ const cands=x.st==='s'||x.st==='u'?(x.cand||[]).map((n,j)=>`<button class="sm" data-a="acc" data-i="${k}" data-j="${j}">${x.st==='s'&&j===0?'Заменить на':'Возможно'} «${esc(n)}»</button>`).join(''):'';
+ const alts=(x.alts||[]).slice(0,2).map((n,j)=>`<button class="sm" data-a="alt" data-i="${k}" data-j="${j}">Другое прочтение «${esc(n)}»</button>`).join('');
+ const srch=pk?`<div class="srch"><input data-f="sq" placeholder="Поиск по справочнику" value="${esc(S.srch.q)}" autocomplete="off">${GPM.search(S.srch.q||x.name,S.idx,6).map((r,j)=>`<div class="res" data-a="pickd" data-i="${k}" data-k="${esc(r.d.k)}"><b>${esc(r.n)}</b><span class="mu"> ${esc(r.c)}</span></div>`).join('')||'<div class="mu">Ничего не найдено</div>'}<div class="r"><button class="sm" data-a="srchx">Закрыть</button></div></div>`:'';
+ return`<div class="card ${need&&!x.cf?'wn':''}"><input data-f="n" data-i="${k}" value="${esc(x.name)}" placeholder="Название">
+ <div class="r"><select data-f="q" data-i="${k}">${qopts(x.qty)}</select><span class="mu">шт.</span>${tag}<span style="flex:1"></span><button class="dl" data-a="del" data-i="${k}">✕</button></div>${was}
+ ${hd.length?`<div class="tg s">${hd.map(esc).join('; ')}</div>`:''}
+ ${!cut&&x.st!=='o'?`<div class="r">${cands}${alts}<button class="sm" data-a="srch" data-i="${k}">🔍 Из справочника</button>${x.name.trim()?`<button class="sm" data-a="adddict" data-i="${k}">В справочник</button>`:''}</div>`:''}${srch}
+ ${need?(x.cf?'<div class="tg o">✓ Подтверждено</div>':`<div class="r"><button class="sm ok2" data-a="cf" data-i="${k}">${x.st==='o'?'Подтверждаю позицию':'Оставить как есть'}</button></div>`):''}</div>`}
+function vRev(){const d=S.d,on=true,er=GP.validate(d,on),o=S.ocr||{},q=d.quality&&QL[d.quality],dr=(d.dropped||[]).filter(l=>/[а-яё]{3}/i.test(l)&&l.replace(/[^а-яёa-z0-9]/gi,'').length>=6);
  return`<div class="top"><button class="ib" data-a="home">‹</button><h1>Проверка чека</h1></div>${S.msg?`<div class="bn">${S.msg}</div>`:''}
  ${d.photo?`<div class="stk"><img src="${d.photo}" data-a="viewd" alt="Фото чека"><button class="sm" data-a="viewd">Увеличить</button></div>`:''}
  ${ocrCard()}
@@ -76,12 +95,8 @@ function vRev(){const d=S.d,on=S.dict.length>0,er=GP.validate(d,on),o=S.ocr||{},
  ${(d.warn||[]).map(w=>`<div class="bn">${esc(w)}</div>`).join('')}
  <div class="card"><label>Номер предчека<input data-f="no" inputmode="numeric" value="${esc(d.no)}"></label><label style="margin:0">Дополнительный ID<input data-f="ex" inputmode="numeric" value="${esc(d.ex)}"></label></div>
  ${d.notes?`<div class="card"><label style="margin:0">Комментарий повару<textarea data-f="notes" style="min-height:60px">${esc(d.notes)}</textarea></label></div>`:''}
- ${d.items.map((x,k)=>{const need=GP.needsOk(x,on);return`<div class="card ${need&&!x.cf?'wn':''}"><input data-f="n" data-i="${k}" value="${esc(x.name)}" placeholder="Название">
- <div class="r"><select data-f="q" data-i="${k}">${qopts(x.qty)}</select><span class="mu">шт.</span>
- ${x.kind==='cutlery'?'<span class="tg o">Прибор</span>':x.st==='o'?'<span class="tg o">В справочнике</span>':x.st==='s'?`<button class="sm" data-a="acc" data-i="${k}">Заменить на «${esc(x.sug)}»</button>`:`<span class="tg u">${on?'Нет в справочнике':'Справочник пуст'}</span>${on&&x.name.trim()?`<button class="sm" data-a="adddict" data-i="${k}">В справочник</button>`:''}`}
- <span style="flex:1"></span><button class="dl" data-a="del" data-i="${k}">✕</button></div>
- ${x.doubt.length?`<div class="tg s">${x.doubt.map(esc).join('; ')}</div>`:''}
- ${need?(x.cf?'<div class="tg o">✓ Подтверждено</div>':`<div class="r"><button class="sm ok2" data-a="cf" data-i="${k}">Подтверждаю позицию</button></div>`):''}</div>`}).join('')}
+ ${revSummary(d)}
+ ${d.items.map((x,k)=>itemCard(x,k)).join('')}
  <button class="lnk" data-a="addrow">+ Добавить позицию</button>
  ${(d.skipped||[]).length?`<div class="card wn"><b>Строки таблицы, не вошедшие в позиции</b><div class="mu">Это могут быть блюда с плохо прочитанными цифрами. Добавьте строку как позицию или уберите её.</div>${d.skipped.map((s,k)=>`<div class="r"><span style="flex:1">${esc(s.line)}</span><button class="sm" data-a="sk-add" data-i="${k}">Позиция</button><button class="dl" data-a="sk-rm" data-i="${k}">✕</button></div>`).join('')}</div>`:''}
  ${dr.length?`<details class="card"><summary>Текст вне таблицы, похожий на слова (${dr.length})</summary><div class="mu">Это не позиции: шапка, реклама, комментарии. Показано для проверки, что блюдо не потерялось.</div>${dr.slice(0,25).map(l=>`<div class="r"><span style="flex:1;font-size:14px">${esc(l)}</span><button class="sm" data-a="dr-add" data-t="${esc(l)}">Позиция</button></div>`).join('')}</details>`:''}
@@ -111,11 +126,13 @@ function cropDefault(){const d=S.d,b=d&&d.box;if(b){const w=b.x1-b.x0,h=b.y1-b.y
 async function cropOpen(){const d=S.d;if(!d||!d.ocrSrc)return;if(S.ocr.busy){toast('Сначала остановите распознавание',1);return}
  const img=new Image();await new Promise(r=>{img.onload=r;img.onerror=r;img.src=d.ocrSrc});if(!img.naturalWidth)return toast('Не удалось открыть фото',1);
  CR.img=img;CR.w=img.naturalWidth;CR.h=img.naturalHeight;CR.q=d.quad||cropDefault();go('crop');cropInit()}
-function vDict(){const q=norm(S.ds),L=S.dict.filter(d=>!q||d.k.includes(q)).sort((a,b)=>a.n.localeCompare(b.n,'ru'));
+function vDict(){const q=S.ds.trim(),L=q?GPM.search(q,S.idx,80).map(r=>r.d):S.dict.slice(0,80),srcT=d=>d.src==='seed'?'встроенный':d.src==='import'?'импорт':d.src==='edit'?'изменён':'вручную';
  return`<div class="top"><button class="ib" data-a="home">‹</button><h1>Справочник · ${S.dict.length}</h1></div>${S.msg?`<div class="bn">${S.msg}</div>`:''}
- <div class="card"><button class="big" data-a="imp">Импорт Excel / CSV</button><div class="mu" style="margin-top:8px">Берётся колонка с заголовком «Название» или «Блюдо», иначе первая.</div></div>
- <div class="card"><div class="r" style="margin:0"><input data-f="dn" placeholder="Новое блюдо" value="${esc(S.dn)}" style="flex:1"><button class="sm" data-a="dadd">Добавить</button></div></div>
- <div class="card"><input data-f="ds" placeholder="Поиск" value="${esc(S.ds)}">${L.slice(0,150).map(d=>`<div class="r"><span style="flex:1">${esc(d.n)}</span><button class="dl" data-a="ddel" data-k="${esc(d.k)}">✕</button></div>`).join('')||'<div class="mu" style="padding-top:8px">Пусто</div>'}${L.length>150?'<div class="mu">Показаны первые 150, уточните поиск.</div>':''}</div>`}
+ <div class="card"><button class="big" data-a="imp">Импорт Excel / CSV</button><div class="r"><button class="sm" data-a="exp">Экспорт CSV</button><button class="sm" data-a="dreset">${S.dr?'Точно сбросить?':'Вернуть встроенный'}</button>${S.dr?'<button class="sm" data-a="dresetno">Нет</button>':''}</div>
+ <div class="mu">Читаются все листы Excel. Колонки: «Раздел», «Название позиции», «Алиасы (через |)». Это стартовый набор, а не полный список блюд: если блюда нет — оно остаётся с текстом OCR и просит проверки. Справочник хранится только в этом телефоне.</div></div>
+ <div class="card"><div class="r" style="margin:0"><input data-f="dn" placeholder="Новое блюдо" value="${esc(S.dn)}" style="flex:1"></div><div class="r"><input data-f="dc" placeholder="Раздел (необязательно)" value="${esc(S.dcat||'')}" style="flex:1"><button class="sm" data-a="dadd">Добавить</button></div></div>
+ <div class="card"><input data-f="ds" placeholder="Поиск по справочнику" value="${esc(S.ds)}">${L.map(d=>S.edit&&S.edit.k===d.k?`<div class="srch"><input data-f="en" value="${esc(S.edit.n)}" placeholder="Название"><input data-f="ec" value="${esc(S.edit.c)}" placeholder="Раздел"><textarea data-f="ea" placeholder="Другие написания, по одному на строку" style="min-height:60px">${esc(S.edit.a)}</textarea><div class="r"><button class="sm ok2" data-a="esave">Сохранить</button><button class="sm" data-a="ecancel">Отмена</button></div></div>`
+  :`<div class="r"><div style="flex:1"><div>${esc(d.n)}</div><div class="mu">${esc(d.c||'без раздела')} · ${srcT(d)}${d.a.length?` · вариантов: ${d.a.length}`:''}</div></div>${S.ddk===d.k?`<button class="sm" data-a="ddyes" data-k="${esc(d.k)}">Удалить?</button><button class="sm" data-a="ddno">Нет</button>`:`<button class="sm" data-a="dedit" data-k="${esc(d.k)}">✎</button><button class="dl" data-a="ddel" data-k="${esc(d.k)}">✕</button>`}</div>`).join('')||'<div class="mu" style="padding-top:8px">Ничего не найдено</div>'}${!q&&S.dict.length>80?'<div class="mu">Показаны первые 80, используйте поиск.</div>':''}</div>`}
 function render(){const y=scrollY;$('#app').innerHTML={home:vHome,order:vOrder,rev:vRev,dict:vDict,crop:vCrop}[S.v]();scrollTo(0,y);renderViewer();if(S.v==='crop')cropInit()}
 const go=v=>{S.v=v;S.msg='';S.saveErr='';S.repl=0;S.fin=false;scrollTo(0,0);render()};
 /* ---------- Фото и OCR ---------- */
@@ -126,7 +143,7 @@ function fillFrom(d,p){if(p.no)d.no=p.no;d.ex=p.ex||d.ex||'';d.items=p.items.len
  if(p.quality!=='good'&&!p.check)d.warn.push(p.items.length?'Итог чека не найден или не подтвердил сумму позиций: сверьте каждую позицию с фото.':'Позиции в тексте не найдены.');recheck(d)}
 function ocrProgress(run,ev){if(run.cancel)return;const o=S.ocr;o.pct=ev.pct||0;const ph=ev.phase==='variant'?`Проход ${ev.run} из ${ev.runs}: ${ev.label}`:ev.label||'Подготовка';o.step=ph+(ev.pct?` — ${Math.round(ev.pct*100)}%`:'');const a=$('#ocrstep'),b=$('#ocrbar');if(a)a.textContent=o.step;if(b)b.style.width=Math.round((ev.phase==='variant'?(((ev.run-1)+(ev.pct||0))/ev.runs):(ev.pct||0)*.2)*100)+'%'}
 async function runOcr(opts){opts=opts||{};const d=S.d;if(!d||!d.ocrSrc||S.ocr.busy)return;const run={cancel:false};S.ocr={busy:true,run,step:'Подготовка…',pct:0,msg:''};if(S.v!=='rev')go('rev');else render();
- let res;try{const src=await decode(d.ocrSrc);res=await PIPE.recognizeReceipt(src,{recognize:(img,p,cb)=>OCR.recognize(img,p,cb),quad:opts.quad===undefined?(d.quad||null):opts.quad,onProgress:ev=>ocrProgress(run,ev),cancelled:()=>run.cancel})}
+ let res;try{const src=await decode(d.ocrSrc);res=await PIPE.recognizeReceipt(src,{recognize:(img,p,cb)=>OCR.recognize(img,p,cb),quad:opts.quad===undefined?(d.quad||null):opts.quad,match:n=>GPM.match(n,S.idx),onProgress:ev=>ocrProgress(run,ev),cancelled:()=>run.cancel})}
  catch(e){if(S.d!==d)return;S.ocr={msg:run.cancel?'Распознавание остановлено.':'Ошибка распознавания: '+e.message+'. Введите позиции вручную или повторите при наличии интернета.'};return render()}
  if(S.d!==d)return;if(res.cancelled||run.cancel){S.ocr={msg:'Распознавание остановлено.'};return render()}
  d.txt=res.best.text;d.box=res.locate.box||d.box||null;fillFrom(d,res.parsed);d.ocrRes={best:res.best.label,runs:res.runs,sec:res.totalMs/1000,mode:res.locate.mode,diag:PIPE.diagnostics(res,navigator.userAgent)};
@@ -154,10 +171,23 @@ document.addEventListener('click',async e=>{const b=e.target.closest('[data-a]')
  else if(a==='dr-add'){d.items.push({name:b.dataset.t,qty:0,kind:'dish',doubt:['добавлено вручную из текста вне таблицы'],cf:false,st:'u'});recheck(d);render()}
  else if(a==='diag'){const t=d.ocrRes&&d.ocrRes.diag||'';try{await navigator.clipboard.writeText(t);toast('Диагностика скопирована')}catch(e){const ta=document.createElement('textarea');ta.value=t;document.body.appendChild(ta);ta.select();try{document.execCommand('copy');toast('Диагностика скопирована')}catch(_){toast('Не удалось скопировать',1)}ta.remove()}}
  else if(a==='parse'){const r=applyParse(d);S.msg=r.items.length?'':'Позиции в тексте не найдены. Добавьте их вручную.';render()}
- else if(a==='del'){d.items.splice(i,1);render()}else if(a==='addrow'){d.items.push(blank());render()}
- else if(a==='acc'){d.items[i].name=d.items[i].sug;recheck(d);render()}
+ else if(a==='del'){d.items.splice(i,1);S.srch=null;render()}else if(a==='addrow'){d.items.push(blank());render()}
+ else if(a==='acc'){const x=d.items[i],n=x.cand&&x.cand[+b.dataset.j||0];if(n){x.name=n;x.cf=false;x.fixed=x.ocr;recheck(d)}render()}
+ else if(a==='alt'){const x=d.items[i],n=x.alts&&x.alts[+b.dataset.j];if(n){x.name=n;x.ocr=n;x.fixed=undefined;x.cf=false;recheck(d)}render()}
+ else if(a==='cfall'){d.items.forEach(x=>{if(x.st==='u'&&!x.gb&&!GP.hard(x).length&&x.kind!=='cutlery')x.cf=true});render()}
+ else if(a==='srch'){S.srch=S.srch&&S.srch.i===i?null:{i,q:''};render()}else if(a==='srchx'){S.srch=null;render()}
+ else if(a==='pickd'){const x=d.items[i],r=S.dict.find(y=>y.k===b.dataset.k);if(r){x.fixed=x.ocr;x.name=r.n;x.cf=false;S.srch=null;recheck(d)}render()}
+ else if(a==='exp')exportDict();
+ else if(a==='dreset'){if(!S.dr){S.dr=true;return render()}let ok=!!DBX;for(const r of(S.recs||[]).slice())if(!(DBX&&await DBX.delDict(r.k)))ok=false;if(ok)S.recs=[];S.dr=false;rebuildDict();if(S.d)recheck(S.d);S.msg=ok?'Справочник возвращён к встроенному набору.':'';if(!ok)toast('Не удалось сбросить справочник',1);render()}
+ else if(a==='dresetno'){S.dr=false;render()}
+ else if(a==='ddel'){S.ddk=b.dataset.k;render()}else if(a==='ddno'){S.ddk=null;render()}
+ else if(a==='ddyes'){await dictDrop(b.dataset.k);S.ddk=null;if(S.d)recheck(S.d);render()}
+ else if(a==='dedit'){const x=S.dict.find(y=>y.k===b.dataset.k);if(x){S.edit={k:x.k,n:x.n,c:x.c,a:x.a.join('\n')};render()}}
+ else if(a==='ecancel'){S.edit=null;render()}
+ else if(a==='esave'){const e=S.edit,n=GPD.clean(e.n),k=GPD.key(n),old=S.dict.find(x=>x.k===e.k);if(!k||!old)return toast('Укажите название',1);if(k!==e.k&&S.dict.some(x=>x.k===k))return toast('Такое блюдо уже есть в справочнике',1);
+  const rec={k,n,c:GPD.clean(e.c),a:GPD.uniq(e.a.split(/\n+/)),src:old.src==='import'?'import':old.src==='user'?'user':'edit'};if(k!==e.k&&!await dictDrop(e.k))return;if(await dictPut(rec)){S.edit=null;if(S.d)recheck(S.d);render()}}
  else if(a==='cf'){d.items[i].cf=true;render()}
- else if(a==='adddict'){await addDict(d.items[i].name);recheck(d);render()}
+ else if(a==='adddict'){await addDict(d.items[i].name,'');recheck(d);render()}
  else if(a==='sk-add'){d.items.push({name:d.skipped[i].line,qty:0,kind:'dish',doubt:['добавлено из пропущенных строк'],cf:false,st:'u'});d.skipped.splice(i,1);recheck(d);render()}
  else if(a==='sk-rm'){d.skipped.splice(i,1);render()}
  else if(a==='create'){if(S.busy)return;const on=S.dict.length>0;if(GP.validate(d,on).length)return render();
@@ -166,8 +196,7 @@ document.addEventListener('click',async e=>{const b=e.target.closest('[data-a]')
   S.busy=true;render();const ok=DBX?await DBX.createOrder(n,d.photo||null):false;S.busy=false;
   if(!ok){S.saveErr='Заказ НЕ создан: запись в память телефона не удалась'+(DBX?'':' (память недоступна)')+'. Нажмите «Создать заказ», чтобы повторить.';toast('Заказ не создан',1);return render()}
   S.orders.push(n);if(d.photo)S.ph[n.id+':receipt']=d.photo;S.id=n.id;S.d=null;S.ocr={};go('order')}
- else if(a==='dadd'){await addDict(S.dn);S.dn='';render()}
- else if(a==='ddel'){S.dict=S.dict.filter(x=>x.k!==b.dataset.k);if(DBX)await DBX.delDict(b.dataset.k);render()}});
+ else if(a==='dadd'){if(await addDict(S.dn,S.dcat)){S.dn='';S.dcat=''}if(S.d)recheck(S.d);render()}});
 document.addEventListener('change',async e=>{const t=e.target,f=t.dataset.f,i=+t.dataset.i,d=S.d;
  if((t.id==='fc'||t.id==='fg')&&t.files[0]){const fl=t.files[0],o=S.orders.find(x=>x.id===S.pick);t.value='';if(!o||o.done||(!o.hasDelivery&&!GPC.canAddDelivery(o)))return toast('Сейчас добавить фото нельзя',1);const data=await shrink(fl,1280,.78);if(!data)return toast('Не удалось прочитать фото',1);await saveDelivery(o,data)}
  else if(t.id==='fi'&&t.files[0]){const fl=t.files[0],p=await shrink(fl,1800,.82),big=await shrink(fl,2400,.92);t.value='';if(!p)return toast('Не удалось прочитать фото',1);if(S.ocr.busy){S.ocr.run.cancel=true;OCR.cancel()}S.d={id:newId(),no:'',ex:'',photo:p,ocrSrc:big,items:[blank()],skipped:[],dropped:[],warn:[],quad:null};S.ocr={};go('rev');runOcr()}
@@ -175,10 +204,11 @@ document.addEventListener('change',async e=>{const t=e.target,f=t.dataset.f,i=+t
  else if(f==='g'){const o=S.orders.find(x=>x.id===S.id);o.items[i].g=+t.value;saveOrder(o);render()}
  else if(f==='warnok'){d.warnOk=t.checked;render()}else if(f==='notes'){d.notes=t.value}
  else if(f==='no'){d.no=t.value;render()}else if(f==='ex'){d.ex=t.value;render()}
- else if(f==='n'){const x=d.items[i];x.name=t.value;x.cf=false;recheck(d);render()}
+ else if(f==='n'){const x=d.items[i];x.name=t.value;x.ocr=t.value;x.fixed=undefined;x.cf=false;recheck(d);render()}
  else if(f==='q'){d.items[i].qty=+t.value;render()}});
-document.addEventListener('input',e=>{const t=e.target,f=t.dataset.f;if(f==='txt')S.d.txt=t.value;else if(f==='dn')S.dn=t.value;else if(f==='ds'){S.ds=t.value;const p=t.selectionStart;render();const n=$('[data-f=ds]');n.focus();n.setSelectionRange(p,p)}});
+document.addEventListener('input',e=>{const t=e.target,f=t.dataset.f;if(f==='txt')S.d.txt=t.value;else if(f==='dn')S.dn=t.value;else if(f==='ds'){S.ds=t.value;const p=t.selectionStart;render();const n=$('[data-f=ds]');n.focus();n.setSelectionRange(p,p)}
+ else if(f==='sq'){S.srch.q=t.value;const p=t.selectionStart;render();const n=$('[data-f=sq]');if(n){n.focus();n.setSelectionRange(p,p)}}else if(f==='dc')S.dcat=t.value;else if(S.edit&&(f==='en'||f==='ec'||f==='ea'))S.edit[f[1]]=t.value});
 /* ---------- Запуск ---------- */
-(async()=>{await initDB();if(DBX){S.orders=await DBX.orders();S.dict=await DBX.dict();await DBX.purgeOrphans()}if(navigator.storage&&navigator.storage.persist)navigator.storage.persist().catch(()=>{});
- await cleanup();render();setInterval(cleanup,6e4);document.addEventListener('visibilitychange',()=>{if(!document.hidden)cleanup()});
+(async()=>{await initDB();if(DBX){S.orders=await DBX.orders();S.recs=await DBX.dict();await DBX.purgeOrphans()}rebuildDict();if(navigator.storage&&navigator.storage.persist)navigator.storage.persist().catch(()=>{});
+ S.ready=true;await cleanup();render();setInterval(cleanup,6e4);document.addEventListener('visibilitychange',()=>{if(!document.hidden)cleanup()});
  if('serviceWorker' in navigator&&(location.protocol==='https:'||location.hostname==='localhost'))navigator.serviceWorker.register('service-worker.js').catch(()=>{})})();

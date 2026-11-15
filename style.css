@@ -67,3 +67,7 @@ input.wnf{border-color:var(--wn)}
 .fab.rv{background:var(--bg);border-top:1px solid var(--ln);box-shadow:0 -4px 12px rgba(0,0,0,.06)}.fabc{font-size:13px;color:var(--mu,#666);margin:0 0 6px;text-align:center}
 #app{padding-bottom:calc(150px + env(safe-area-inset-bottom,0px))}
 .card.it{padding:10px 12px;margin-bottom:8px}.card.it textarea.nm{padding:8px 10px;border-radius:10px}.card.it .r{margin-top:6px;gap:6px}.card.it select{padding:6px 8px;border-radius:10px;min-width:64px}.card.it .dl{padding:2px 8px}
+
+/* 014: словарь исправлений OCR */
+.learn-btn{background:var(--a2);color:var(--ac);border:1px solid var(--ac)}
+.learn-arrow{color:var(--ok);font-size:22px;font-weight:700;margin:6px 0}

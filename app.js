@@ -1,7 +1,7 @@
 const $=s=>document.querySelector(s),esc=s=>String(s??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
-const S={engine:(()=>{try{return localStorage.getItem('gp-engine')||'neural'}catch(e){return'neural'}})(),orders:[],dict:[],recs:[],idx:[],srch:null,edit:null,ddk:null,dr:false,dcat:'',v:'home',id:null,d:null,ds:'',dn:'',fin:false,photoOpen:false,ocr:{},msg:'',ph:{},viewer:null,pick:null,repl:0,phErr:null,saveErr:'',busy:false};const DAY=864e5,norm=GP.norm;
+const S={engine:(()=>{try{return localStorage.getItem('gp-engine')||'neural'}catch(e){return'neural'}})(),orders:[],dict:[],recs:[],rules:[],learnRemove:null,learnClear:false,idx:[],srch:null,edit:null,ddk:null,dr:false,dcat:'',v:'home',id:null,d:null,ds:'',dn:'',fin:false,photoOpen:false,ocr:{},msg:'',ph:{},viewer:null,pick:null,repl:0,phErr:null,saveErr:'',busy:false};const DAY=864e5,norm=GP.norm;
 function toast(m,bad){const t=$('#toast');t.textContent=m;t.className='toast on'+(bad?' bad':'');clearTimeout(toast.h);toast.h=setTimeout(()=>t.className='toast',bad?8000:3000)}
-/* ---------- IndexedDB (V008: orders + photos + dict, схема v2; логика в db.js) ---------- */
+/* ---------- IndexedDB (014: заказы, фото, справочник, подтверждённые исправления OCR) ---------- */
 let DBX=null,dbErr='';
 async function initDB(){try{DBX=await DB.open()}catch(e){DBX=null;dbErr=(e&&e.message)||'ошибка'}}
 async function saveOrder(o){if(!DBX||!await DBX.putOrder(o)){toast('Прогресс заказа НЕ сохранён в память телефона',1);return false}return true}
@@ -12,9 +12,18 @@ function rebuildDict(){S.dict=GPD.build(GP_SEED.items,S.recs||[]).sort((a,b)=>a.
 const seedKeys=new Set(GP_SEED.items.map(x=>GPD.key(x.n)));
 /* статус позиции: o — в справочнике (подтверждать не нужно), s — похоже, нужен один тап, u — нет в справочнике; исходный текст OCR хранится в x.ocr */
 function recheck(d){d.items.forEach(x=>{if(x.kind==='cutlery'){x.st='o';return}
- if(x.ocr===undefined)x.ocr=x.name;const m=GPM.match(x.name,S.idx);x.st=m.st;x.how=m.how;x.gb=GPM.garbled(x.ocr||x.name);
- x.cand=m.st==='o'?[]:(m.alts||[]).filter(a=>a.score>=(m.st==='s'?.6:.62)).map(a=>a.n).slice(0,3);x.sug=m.st==='s'?m.name:'';
- if(m.st==='o'&&m.name!==x.name){x.fixed=x.name;x.name=m.name}})}
+ if(x.ocr===undefined)x.ocr=x.name;
+ // При изменении/удалении правила пересчитываем автоматическое исправление из исходного OCR.
+ if(x.learned&&!x.userEdited){x.name=x.ocr;x.fixed=undefined;x.learned=false}
+ let m=GPM.match(x.name,S.idx);
+ // Если оператор вводит своё название, похожее блюдо нельзя подставлять без подтверждения.
+ if(x.userEdited&&m.st==='o'&&!['exact','alias'].includes(m.how)&&m.name!==x.name)m={...m,st:'s',how:'manual-similar'};
+ // Применяется только подтверждённое ранее правило. Ручную правку не перезаписываем.
+ const r=!x.userEdited&&GPL.key(x.name)===GPL.key(x.ocr)?GPL.resolve(x.ocr,S.rules,S.dict):null;
+ if(r){x.name=r.target.n;x.fixed=x.ocr;x.learned=true;m={st:'o',name:r.target.n,how:'learned',alts:[]}}
+ x.st=m.st;x.how=m.how;x.gb=GPM.garbled(x.ocr||x.name);
+ x.cand=m.st==='o'?[]:GPL.alternatives(x.name,S.idx,GPM,3);x.sug=m.st==='s'?m.name:'';
+ if(m.st==='o'&&m.name!==x.name){x.fixed=x.ocr;x.name=m.name}})}
 async function dictPut(rec){if(DBX&&await DBX.putDict(rec)){S.recs=(S.recs||[]).filter(r=>r.k!==rec.k);S.recs.push(rec);rebuildDict();return true}toast('Справочник не сохранился',1);return false}
 async function dictDrop(k){const ok=seedKeys.has(k)?await DBX.putDict({k,del:true}):await DBX.delDict(k);if(!ok)return toast('Справочник не сохранился',1),false;S.recs=(S.recs||[]).filter(r=>r.k!==k);if(seedKeys.has(k))S.recs.push({k,del:true});rebuildDict();return true}
 async function addDict(name,cat){name=GPD.clean(name);const k=GPD.key(name);if(!k)return false;if(S.dict.some(x=>x.k===k)){toast('Такое блюдо уже есть в справочнике',1);return false}return dictPut({k,n:name,c:GPD.clean(cat),a:[],src:'user'})}
@@ -34,7 +43,7 @@ function card(o){const[s,c]=stt(o);return`<div class="card" data-a="open" data-i
 function vHome(){const L=[...S.orders].sort((a,b)=>(a.done-b.done)||b.t-a.t);
  return`<div class="top"><h1>GONER PACK</h1><button class="ib2" data-a="dict">Справочник · ${S.dict.length}</button></div>${DBX?'':`<div class="bn">Память телефона (IndexedDB) недоступна${dbErr?': '+esc(dbErr):''}. Создать заказ нельзя: он не сохранится.</div>`}
  ${L.length?L.map(card).join(''):'<div class="emp">Заказов пока нет.<br>Нажмите «Сканировать чек»: фото распознаётся на телефоне, затем вы проверяете позиции.</div>'}
- <div class="mu" style="text-align:center;margin-top:14px">Версия 013 · справочник ${S.dict.length} · <a href="lab.html">OCR LAB</a></div>
+ <div class="mu" style="text-align:center;margin-top:14px">Версия 014 · справочник ${S.dict.length} · <a href="lab.html">OCR LAB</a></div>
  <div class="fab"><button class="big" data-a="scan">📷 Сканировать чек</button><button class="lnk" data-a="manual">Ввести вручную</button></div>`}
 const pickBtns=()=>`<div class="r"><button class="sm" data-a="pickc" ${S.busy?'disabled':''}>📷 Камера</button><button class="sm" data-a="pickg" ${S.busy?'disabled':''}>🖼 Галерея</button></div>`;
 function phCard(o,k){const t=k==='receipt'?'Фото чека':'Фото готовой доставки',has=k==='receipt'?o.hasReceipt:o.hasDelivery,src=S.ph[o.id+':'+k];let b=`<div class="card"><b>${t}</b>`;
@@ -82,7 +91,10 @@ function revSummary(d){const c=revCounts(d),bulk=d.items.filter(x=>x.st==='u'&&!
  return c.n?`<div class="cnt"><span class="ok">✓ ${c.ok} готово</span><span class="${c.left?'wn':'ok'}">${c.left?'⚠ проверить '+c.left:'проверять нечего'}</span><span>блюд ${c.n}</span><span>приборов ${c.cut}</span></div>${bulk>=2?`<div class="r" style="margin:0 0 10px"><button class="sm" data-a="cfall">Оставить как есть все блюда не из справочника (${bulk})</button></div>`:''}`:''}
 function itemCard(x,k){const need=GP.needsOk(x,true),hd=GP.hard(x),cut=x.kind==='cutlery',pk=S.srch&&S.srch.i===k;
  const tag=cut?'<span class="tg o">Прибор</span>':x.st==='o'?'<span class="tg o">✓ В справочнике</span>':x.st==='s'?'<span class="tg s">Похоже на запись справочника</span>':x.gb?'<span class="tg u">Похоже на ошибку распознавания</span>':'<span class="tg u">Нет в справочнике</span>';
- const was=x.fixed&&GPM.tokens(x.fixed).join('')!==GPM.tokens(x.name).join('')?`<div class="mu sm2">OCR: «${esc(x.fixed)}» → исправлено по справочнику</div>`:'';
+ const was=x.fixed&&GPL.key(x.fixed)!==GPL.key(x.name)?`<div class="mu sm2">OCR: «${esc(x.fixed)}» → ${x.learned?'исправлено по вашему словарю':'исправлено по справочнику'}</div>`:'';
+ const target=x.userEdited&&x.st==='o'?GPL.canLearn(x.ocr,x.name,S.dict):null;
+ const known=target&&S.rules.some(r=>r.k===GPL.key(x.ocr)&&r.target===target.k);
+ const learning=target&&!known?`<div class="r"><button class="sm learn-btn" data-a="learnsave" data-i="${k}">🧠 Запомнить исправление</button></div>`:known?'<div class="mu sm2">✓ Исправление уже запомнено</div>':'';
  const kk=v=>GPM.tokens(v).join(''),seen=new Set([kk(x.name)]),uniqN=v=>{const q=kk(v);if(seen.has(q))return false;seen.add(q);return true};
  const cands=x.st==='s'||x.st==='u'?(x.cand||[]).map((n,j)=>({n,j})).filter(z=>uniqN(z.n)).map(({n,j})=>`<button class="sm" data-a="acc" data-i="${k}" data-j="${j}">${x.st==='s'&&j===0?'Заменить на':'Возможно'} «${esc(n)}»</button>`).join(''):'';
  const alts=(x.alts||[]).map((n,j)=>({n,j})).filter(z=>{const m=GPM.match(z.n,S.idx);return!(m.st==='o'&&(m.name===x.name||(x.cand||[]).includes(m.name)))&&uniqN(z.n)}).slice(0,2).map(({n,j})=>`<button class="sm" data-a="alt" data-i="${k}" data-j="${j}">Другое прочтение «${esc(n)}»</button>`).join('');
@@ -91,6 +103,7 @@ function itemCard(x,k){const need=GP.needsOk(x,true),hd=GP.hard(x),cut=x.kind===
  <div class="r"><select data-f="q" data-i="${k}">${qopts(x.qty)}</select><span class="mu">шт.</span>${tag}<span style="flex:1"></span><button class="dl" data-a="del" data-i="${k}">✕</button></div>${was}
  ${hd.length?`<div class="tg s">${hd.map(esc).join('; ')}</div>`:''}
  ${!cut&&x.st!=='o'?`<div class="r">${cands}${alts}<button class="sm" data-a="srch" data-i="${k}">🔍 Из справочника</button>${x.name.trim()?`<button class="sm" data-a="adddict" data-i="${k}">В справочник</button>`:''}</div>`:''}${srch}
+ ${learning}
  ${need?(x.cf?'<div class="tg o">✓ Подтверждено</div>':`<div class="r"><button class="sm ok2" data-a="cf" data-i="${k}">${x.st==='o'?'Подтверждаю позицию':'Оставить как есть'}</button></div>`):''}</div>`}
 function idWarn(d,lab){const w=(d.warn||[]).find(x=>x.startsWith(lab+' прочитан'));if(!w)return'';const m=w.match(/\(([^)]*)\): выбран (\d+)/);return`<div class="tg s" style="margin:4px 0 8px">${m?`Проходы OCR прочитали по-разному: ${esc(m[1])}. Выбран ${esc(m[2])} — сверьте с фото.`:esc(w)}</div>`}
 function vRev(){const d=S.d,on=true,er=GP.validate(d,on),o=S.ocr||{},q=d.quality&&QL[d.quality],dr=(d.dropped||[]).filter(l=>/[а-яё]{3}/i.test(l)&&l.replace(/[^а-яёa-z0-9]/gi,'').length>=6);
@@ -134,12 +147,18 @@ async function cropOpen(){const d=S.d;if(!d||!d.ocrSrc)return;if(S.ocr.busy){toa
  CR.img=img;CR.w=img.naturalWidth;CR.h=img.naturalHeight;CR.q=d.quad||cropDefault();go('crop');cropInit()}
 function vDict(){const q=S.ds.trim(),L=q?GPM.search(q,S.idx,80).map(r=>r.d):S.dict.slice(0,80),srcT=d=>d.src==='seed'?'встроенный':d.src==='import'?'импорт':d.src==='edit'?'изменён':'вручную';
  return`<div class="top"><button class="ib" data-a="home">‹</button><h1>Справочник · ${S.dict.length}</h1></div>${S.msg?`<div class="bn">${S.msg}</div>`:''}
- <div class="card"><button class="big" data-a="imp">Импорт Excel / CSV</button><div class="r"><button class="sm" data-a="exp">Экспорт CSV</button><button class="sm" data-a="dreset">${S.dr?'Точно сбросить?':'Вернуть встроенный'}</button>${S.dr?'<button class="sm" data-a="dresetno">Нет</button>':''}</div>
+  <div class="card"><button class="sm" data-a="learnview">🧠 История исправлений · ${S.rules.length}</button><div class="mu" style="margin-top:6px">Здесь хранятся только подтверждённые вами исправления OCR. На других устройствах они пока не синхронизируются.</div></div>
+  <div class="card"><button class="big" data-a="imp">Импорт Excel / CSV</button><div class="r"><button class="sm" data-a="exp">Экспорт CSV</button><button class="sm" data-a="dreset">${S.dr?'Точно сбросить?':'Вернуть встроенный'}</button>${S.dr?'<button class="sm" data-a="dresetno">Нет</button>':''}</div>
  <div class="mu">Читаются все листы Excel. Колонки: «Раздел», «Название позиции», «Алиасы (через |)». Это стартовый набор, а не полный список блюд: если блюда нет — оно остаётся с текстом OCR и просит проверки. Справочник хранится только в этом телефоне.</div></div>
  <div class="card"><div class="r" style="margin:0"><input data-f="dn" placeholder="Новое блюдо" value="${esc(S.dn)}" style="flex:1"></div><div class="r"><input data-f="dc" placeholder="Раздел (необязательно)" value="${esc(S.dcat||'')}" style="flex:1"><button class="sm" data-a="dadd">Добавить</button></div></div>
  <div class="card"><input data-f="ds" placeholder="Поиск по справочнику" value="${esc(S.ds)}">${L.map(d=>S.edit&&S.edit.k===d.k?`<div class="srch"><input data-f="en" value="${esc(S.edit.n)}" placeholder="Название"><input data-f="ec" value="${esc(S.edit.c)}" placeholder="Раздел"><textarea data-f="ea" placeholder="Другие написания, по одному на строку" style="min-height:60px">${esc(S.edit.a)}</textarea><div class="r"><button class="sm ok2" data-a="esave">Сохранить</button><button class="sm" data-a="ecancel">Отмена</button></div></div>`
   :`<div class="r"><div style="flex:1"><div>${esc(d.n)}</div><div class="mu">${esc(d.c||'без раздела')} · ${srcT(d)}${d.a.length?` · вариантов: ${d.a.length}`:''}</div></div>${S.ddk===d.k?`<button class="sm" data-a="ddyes" data-k="${esc(d.k)}">Удалить?</button><button class="sm" data-a="ddno">Нет</button>`:`<button class="sm" data-a="dedit" data-k="${esc(d.k)}">✎</button><button class="dl" data-a="ddel" data-k="${esc(d.k)}">✕</button>`}</div>`).join('')||'<div class="mu" style="padding-top:8px">Ничего не найдено</div>'}${!q&&S.dict.length>80?'<div class="mu">Показаны первые 80, используйте поиск.</div>':''}</div>`}
-function render(){const y=scrollY;$('#app').innerHTML={home:vHome,order:vOrder,rev:vRev,dict:vDict,crop:vCrop}[S.v]();scrollTo(0,y);renderViewer();if(S.v==='crop')cropInit()}
+function vLearn(){const rules=[...S.rules].sort((a,b)=>(b.t||0)-(a.t||0));
+ return`<div class="top"><button class="ib" data-a="dict">‹</button><h1>История исправлений · ${rules.length}</h1></div>
+ <div class="card"><div class="mu">Исправления сохраняются только после вашего нажатия «Запомнить исправление». Они не изменяют фото и не заменяют незнакомые блюда по догадке. При удалении правила следующее распознавание использует обычный справочник.</div></div>
+ ${rules.map(r=>{const d=S.dict.find(x=>x.k===r.target);return`<div class="card"><div class="mu">OCR прочитал:</div><b>${esc(r.raw)}</b><div class="learn-arrow">↓</div><div>${d?esc(d.n):'<span class="tg u">Блюдо больше не найдено в справочнике — правило не применяется</span>'}</div><div class="r">${S.learnRemove===r.k?`<button class="sm" data-a="lrmyes" data-k="${esc(r.k)}">Точно удалить?</button><button class="sm" data-a="lrmno">Отмена</button>`:`<button class="sm" data-a="lrm" data-k="${esc(r.k)}">Удалить правило</button>`}</div></div>`}).join('')||'<div class="emp">Пока нет сохранённых исправлений. Исправьте название в проверке чека и нажмите «Запомнить исправление».</div>'}
+ ${rules.length?`<div class="r">${S.learnClear?'<button class="sm" data-a="lclearyes">Да, удалить все</button><button class="sm" data-a="lclearno">Отмена</button>':'<button class="sm" data-a="lclear">Очистить всю историю</button>'}</div>`:''}`}
+function render(){const y=scrollY;$('#app').innerHTML={home:vHome,order:vOrder,rev:vRev,dict:vDict,learn:vLearn,crop:vCrop}[S.v]();scrollTo(0,y);renderViewer();if(S.v==='crop')cropInit()}
 const go=v=>{S.v=v;S.msg='';S.saveErr='';S.repl=0;S.fin=false;scrollTo(0,0);render()};
 /* ---------- Фото и OCR ---------- */
 function shrink(f,mx,q){return new Promise(r=>{const fr=new FileReader();fr.onload=()=>{const i=new Image();i.onload=()=>{const k=Math.min(1,mx/Math.max(i.width,i.height)),c=document.createElement('canvas');c.width=i.width*k;c.height=i.height*k;c.getContext('2d').drawImage(i,0,0,c.width,c.height);r(c.toDataURL('image/jpeg',q))};i.onerror=()=>r(null);i.src=fr.result};fr.onerror=()=>r(null);fr.readAsDataURL(f)})}
@@ -165,7 +184,7 @@ async function runOcr(opts){opts=opts||{};const d=S.d;if(!d||!d.ocrSrc||S.ocr.bu
  S.ocr={msg:note+(res.parsed.items.length?'Готово. Проверьте номер, ID и позиции по фото: заказ автоматически не создаётся.':'Позиции не найдены.')};render()}
 /* ---------- События ---------- */
 document.addEventListener('click',async e=>{const b=e.target.closest('[data-a]');if(!b)return;const a=b.dataset.a,i=+b.dataset.i,o=S.orders.find(x=>x.id===S.id),d=S.d;
- if(a==='home'){if(S.ocr.run)S.ocr.run.cancel=true;if(S.ocr.busy)OCR.cancel();S.ocr={};go('home')}else if(a==='dict')go('dict');else if(a==='scan')$('#fi').click();else if(a==='imp')$('#fd').click();
+ if(a==='home'){if(S.ocr.run)S.ocr.run.cancel=true;if(S.ocr.busy)OCR.cancel();S.ocr={};go('home')}else if(a==='dict')go('dict');else if(a==='learnview')go('learn');else if(a==='scan')$('#fi').click();else if(a==='imp')$('#fd').click();
  else if(a==='manual'){S.d={id:newId(),no:'',ex:'',photo:null,items:[blank()],skipped:[]};S.ocr={};go('rev')}
  else if(a==='open'){S.id=+b.dataset.id;S.phErr=null;go('order');loadPhotos(S.orders.find(x=>x.id===S.id))}
  else if(a==='view'){S.viewer={id:o.id,k:b.dataset.k,z:0};render()}else if(a==='zoom'){S.viewer.z=S.viewer.z?0:1;renderViewer()}else if(a==='vclose'){S.viewer=null;renderViewer()}
@@ -189,12 +208,24 @@ document.addEventListener('click',async e=>{const b=e.target.closest('[data-a]')
  else if(a==='diag'){const t=d.ocrRes&&d.ocrRes.diag||'';try{await navigator.clipboard.writeText(t);toast('Диагностика скопирована')}catch(e){const ta=document.createElement('textarea');ta.value=t;document.body.appendChild(ta);ta.select();try{document.execCommand('copy');toast('Диагностика скопирована')}catch(_){toast('Не удалось скопировать',1)}ta.remove()}}
  else if(a==='parse'){const r=applyParse(d);S.msg=r.items.length?'':'Позиции в тексте не найдены. Добавьте их вручную.';render()}
  else if(a==='del'){d.items.splice(i,1);S.srch=null;render()}else if(a==='addrow'){d.items.push(blank());render()}
- else if(a==='acc'){const x=d.items[i],n=x.cand&&x.cand[+b.dataset.j||0];if(n){x.name=n;x.cf=false;x.fixed=x.ocr;recheck(d)}render()}
- else if(a==='alt'){const x=d.items[i],n=x.alts&&x.alts[+b.dataset.j];if(n){x.name=n;x.ocr=n;x.fixed=undefined;x.cf=false;recheck(d)}render()}
+ else if(a==='acc'){const x=d.items[i],n=x.cand&&x.cand[+b.dataset.j||0];if(n){x.name=n;x.userEdited=true;x.learned=false;x.cf=false;x.fixed=x.ocr;recheck(d)}render()}
+ else if(a==='alt'){const x=d.items[i],n=x.alts&&x.alts[+b.dataset.j];if(n){x.name=n;x.userEdited=true;x.learned=false;x.fixed=x.ocr;x.cf=false;recheck(d)}render()}
  else if(a==='cfall'){d.items.forEach(x=>{if(x.st==='u'&&!x.gb&&!GP.hard(x).length&&x.kind!=='cutlery')x.cf=true});render()}
  else if(a==='srch'){S.srch=S.srch&&S.srch.i===i?null:{i,q:''};render()}else if(a==='srchx'){S.srch=null;render()}
- else if(a==='pickd'){const x=d.items[i],r=S.dict.find(y=>y.k===b.dataset.k);if(r){x.fixed=x.ocr;x.name=r.n;x.cf=false;S.srch=null;recheck(d)}render()}
- else if(a==='exp')exportDict();
+ else if(a==='pickd'){const x=d.items[i],r=S.dict.find(y=>y.k===b.dataset.k);if(r){x.fixed=x.ocr;x.name=r.n;x.userEdited=true;x.learned=false;x.cf=false;S.srch=null;recheck(d)}render()}
+  else if(a==='learnsave'){const x=d&&d.items[i],rec=x&&x.userEdited&&GPL.makeRule(x.ocr,x.name,S.dict);
+   if(!rec)return toast('Выберите существующее блюдо в справочнике и подтвердите исправление',1);
+   if(!DBX||!await DBX.putLearn(rec))return toast('Исправление НЕ сохранилось',1);
+   S.rules=S.rules.filter(r=>r.k!==rec.k);S.rules.push(rec);toast('Исправление запомнено на этом телефоне');render()}
+  else if(a==='lrm'){S.learnRemove=b.dataset.k;render()}
+  else if(a==='lrmno'){S.learnRemove=null;render()}
+  else if(a==='lrmyes'){const k=b.dataset.k;if(!DBX||!await DBX.delLearn(k))return toast('Правило не удалилось',1);
+   S.rules=S.rules.filter(r=>r.k!==k);S.learnRemove=null;if(S.d)recheck(S.d);render()}
+  else if(a==='lclear'){S.learnClear=true;render()}
+  else if(a==='lclearno'){S.learnClear=false;render()}
+  else if(a==='lclearyes'){if(!DBX||!await DBX.clearLearn())return toast('Не удалось очистить историю',1);
+   S.rules=[];S.learnClear=false;if(S.d)recheck(S.d);render()}
+  else if(a==='exp')exportDict();
  else if(a==='dreset'){if(!S.dr){S.dr=true;return render()}let ok=!!DBX;for(const r of(S.recs||[]).slice())if(!(DBX&&await DBX.delDict(r.k)))ok=false;if(ok)S.recs=[];S.dr=false;rebuildDict();if(S.d)recheck(S.d);S.msg=ok?'Справочник возвращён к встроенному набору.':'';if(!ok)toast('Не удалось сбросить справочник',1);render()}
  else if(a==='dresetno'){S.dr=false;render()}
  else if(a==='ddel'){S.ddk=b.dataset.k;render()}else if(a==='ddno'){S.ddk=null;render()}
@@ -221,12 +252,12 @@ document.addEventListener('change',async e=>{const t=e.target,f=t.dataset.f,i=+t
  else if(f==='g'){const o=S.orders.find(x=>x.id===S.id);o.items[i].g=+t.value;saveOrder(o);render()}
  else if(f==='warnok'){d.warnOk=t.checked;render()}else if(f==='notes'){d.notes=t.value}
  else if(f==='no'){d.no=t.value;render()}else if(f==='ex'){d.ex=t.value;render()}
- else if(f==='n'){const x=d.items[i];x.name=t.value;x.ocr=t.value;x.fixed=undefined;x.cf=false;recheck(d);render()}
+ else if(f==='n'){const x=d.items[i];if(x.ocr===undefined)x.ocr=x.name;x.name=t.value;x.userEdited=GPL.key(t.value)!==GPL.key(x.ocr);x.learned=false;x.fixed=x.userEdited?x.ocr:undefined;x.cf=false;recheck(d);render()}
  else if(f==='q'){d.items[i].qty=+t.value;render()}});
 document.addEventListener('keydown',e=>{if(e.key==='Enter'&&e.target.classList&&e.target.classList.contains('nm')){e.preventDefault();e.target.blur()}});
 document.addEventListener('input',e=>{const t=e.target,f=t.dataset.f;if(t.classList&&t.classList.contains('nm')){t.style.height='auto';t.style.height=t.scrollHeight+'px'}if(f==='txt')S.d.txt=t.value;else if(f==='dn')S.dn=t.value;else if(f==='ds'){S.ds=t.value;const p=t.selectionStart;render();const n=$('[data-f=ds]');n.focus();n.setSelectionRange(p,p)}
  else if(f==='sq'){S.srch.q=t.value;const p=t.selectionStart;render();const n=$('[data-f=sq]');if(n){n.focus();n.setSelectionRange(p,p)}}else if(f==='dc')S.dcat=t.value;else if(S.edit&&(f==='en'||f==='ec'||f==='ea'))S.edit[f[1]]=t.value});
 /* ---------- Запуск ---------- */
-(async()=>{await initDB();if(DBX){S.orders=await DBX.orders();S.recs=await DBX.dict();await DBX.purgeOrphans()}rebuildDict();if(navigator.storage&&navigator.storage.persist)navigator.storage.persist().catch(()=>{});
+(async()=>{await initDB();if(DBX){S.orders=await DBX.orders();S.recs=await DBX.dict();S.rules=await DBX.learn();await DBX.purgeOrphans()}rebuildDict();if(navigator.storage&&navigator.storage.persist)navigator.storage.persist().catch(()=>{});
  S.ready=true;await cleanup();render();setInterval(cleanup,6e4);document.addEventListener('visibilitychange',()=>{if(!document.hidden)cleanup()});
  if('serviceWorker' in navigator&&(location.protocol==='https:'||location.hostname==='localhost'))navigator.serviceWorker.register('service-worker.js').catch(()=>{})})();

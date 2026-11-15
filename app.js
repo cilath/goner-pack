@@ -38,15 +38,15 @@ const stt=GPC.status;
 const fmt=t=>new Date(t).toLocaleTimeString('ru',{hour:'2-digit',minute:'2-digit'});
 const blank=()=>({name:'',qty:1,kind:'dish',doubt:[],cf:false,st:'u'});
 const bar=o=>{const p=tot(o)?Math.round(got(o)/tot(o)*100):0;return`<div class="bar"><i class="${p===100?'f':''}" style="width:${p}%"></i></div>`};
-function card(o){const[s,c]=stt(o);return`<div class="card" data-a="open" data-id="${o.id}"><div class="hd"><span class="no">№ ${esc(o.no)}</span><span class="pill ${c}">${s}</span></div>
-<div class="mu">ID ${esc(o.ex||'—')} · создан в ${fmt(o.t)} · чек ${o.hasReceipt?'📄':'—'} · доставка ${o.hasDelivery?'📦':'—'}</div>${bar(o)}<div class="hd mu"><span>Собрано ${got(o)} из ${tot(o)}</span><span>${o.done?'':'Осталось позиций: '+left(o)}</span></div></div>`}
+function card(o){const[s,c]=stt(o);return`<div class="card" data-a="open" data-id="${o.id}"><div class="hd"><span class="no">№ ${esc(o.no)} ${o.type==='takeaway'?'<span class="type-pill">🥡 Навынос</span>':''}</span><span class="pill ${c}">${s}</span></div>
+<div class="mu">${o.type==='takeaway'?'Официант '+esc(o.waiter||'не указан')+(o.due?' · к '+esc(o.due):'')+(o.table?' · стол №'+esc(o.table):'')+(o.guest?' · гость '+esc(o.guest):''):'ID '+esc(o.ex||'—')} · создан в ${fmt(o.t)} · ${o.type==='takeaway'?'скриншот':'чек'} ${o.hasReceipt?'📄':'—'}${o.type==='takeaway'?'':' · доставка '+(o.hasDelivery?'📦':'—')}</div>${bar(o)}<div class="hd mu"><span>Собрано ${got(o)} из ${tot(o)}</span><span>${o.done?'':'Осталось позиций: '+left(o)}</span></div></div>`}
 function vHome(){const L=[...S.orders].sort((a,b)=>(a.done-b.done)||b.t-a.t);
  return`<div class="top"><h1>GONER PACK</h1><button class="ib2" data-a="dict">Справочник · ${S.dict.length}</button></div>${DBX?'':`<div class="bn">Память телефона (IndexedDB) недоступна${dbErr?': '+esc(dbErr):''}. Создать заказ нельзя: он не сохранится.</div>`}
- ${L.length?L.map(card).join(''):'<div class="emp">Заказов пока нет.<br>Нажмите «Сканировать чек»: фото распознаётся на телефоне, затем вы проверяете позиции.</div>'}
- <div class="mu" style="text-align:center;margin-top:14px">Версия 014 · справочник ${S.dict.length} · <a href="lab.html">OCR LAB</a></div>
- <div class="fab"><button class="big" data-a="scan">📷 Сканировать чек</button><button class="lnk" data-a="manual">Ввести вручную</button></div>`}
+ ${L.length?L.map(card).join(''):'<div class="emp">Заказов пока нет.<br>Добавьте чек доставки или скриншот официанта для навыноса.</div>'}
+ <div class="mu" style="text-align:center;margin-top:14px">Версия 016 · справочник ${S.dict.length} · <a href="lab.html">OCR LAB</a></div>
+ <div class="fab"><button class="big" data-a="take">🥡 Навынос по скриншоту</button><div class="r home-actions"><button class="sm" data-a="scan">📷 Сканировать чек</button><button class="sm" data-a="manual">Ввести вручную</button></div></div>`}
 const pickBtns=()=>`<div class="r"><button class="sm" data-a="pickc" ${S.busy?'disabled':''}>📷 Камера</button><button class="sm" data-a="pickg" ${S.busy?'disabled':''}>🖼 Галерея</button></div>`;
-function phCard(o,k){const t=k==='receipt'?'Фото чека':'Фото готовой доставки',has=k==='receipt'?o.hasReceipt:o.hasDelivery,src=S.ph[o.id+':'+k];let b=`<div class="card"><b>${t}</b>`;
+function phCard(o,k){const t=k==='receipt'?(o.type==='takeaway'?'Скриншот официанта':'Фото чека'):'Фото готовой доставки',has=k==='receipt'?o.hasReceipt:o.hasDelivery,src=S.ph[o.id+':'+k];let b=`<div class="card"><b>${t}</b>`;
  if(has)b+=src?`<img class="th" src="${src}" data-a="view" data-k="${k}" alt="${t}"><div class="mu">Нажмите, чтобы открыть крупно</div>`:`<div class="mu">${src===false?'Фото не читается из памяти телефона':'Загрузка фото…'}</div>`;
  else if(k==='receipt')b+='<div class="mu">У заказа нет фото чека (введён вручную).</div>';
  else if(GPC.canAddDelivery(o))b+=`<div class="mu">Сфотографируйте собранный и упакованный заказ перед передачей курьеру.</div>${pickBtns()}`;
@@ -57,17 +57,17 @@ function phCard(o,k){const t=k==='receipt'?'Фото чека':'Фото гот�
 function vOrder(){const o=S.orders.find(x=>x.id===S.id),[s,c]=stt(o),oth=S.orders.filter(x=>!x.done),fb=GPC.finishBlock(o);
  return`<div class="top"><button class="ib" data-a="home">‹</button><h1>№ ${esc(o.no)}</h1><span class="pill ${c}">${s}</span></div>
  ${oth.length>1?`<div class="chips">${oth.map(x=>`<button class="chip ${x.id===o.id?'on':''}" data-a="open" data-id="${x.id}">№${esc(x.no)} · ${got(x)}/${tot(x)}</button>`).join('')}</div>`:''}
- <div class="card"><div class="mu">ID ${esc(o.ex||'—')} · создан в ${fmt(o.t)}</div>${bar(o)}<div class="mu">Собрано ${got(o)} из ${tot(o)}. Заказ и обе фотографии удалятся через 24 часа после создания (проверка при запуске и пока приложение открыто).</div></div>
+ <div class="card"><div class="mu">${o.type==='takeaway'?'🥡 Навынос · официант: '+esc(o.waiter||'не указан')+(o.due?' · к '+esc(o.due):'')+(o.table?' · стол №'+esc(o.table):'')+(o.guest?' · гость '+esc(o.guest):''):'Доставка · ID '+esc(o.ex||'—')} · создан в ${fmt(o.t)}</div>${bar(o)}<div class="mu">Собрано ${got(o)} из ${tot(o)}. Заказ и его изображения удалятся через 24 часа после создания (проверка при запуске и пока приложение открыто).</div></div>
  ${o.note?`<div class="card wn"><b>Комментарий повару</b><div>${esc(o.note)}</div></div>`:''}
  ${phCard(o,'receipt')}
- ${o.items.map((i,k)=>`<div class="card"><div class="row ${i.g>=i.q?'full':''}"><span class="nm">${esc(i.n)} — ${i.q} шт.</span>${i.g>=i.q?'<span class="ck">✓</span>':''}</div>
+ ${o.items.map((i,k)=>`<div class="card"><div class="row ${i.g>=i.q?'full':''}"><span class="nm">${esc(i.n)} — ${i.q} шт.${i.takeaway?' <span class="mu">· 🥡 пометка навынос</span>':''}</span>${i.g>=i.q?'<span class="ck">✓</span>':''}</div>
  <div class="mu">Собрано: ${i.g}/${i.q}</div><div class="st"><button class="pm" data-a="dec" data-i="${k}" ${o.done?'disabled':''}>−</button><span class="cnt">${i.g}</span><button class="pm p" data-a="inc" data-i="${k}" ${o.done?'disabled':''}>+</button>
  <select data-f="g" data-i="${k}" ${o.done?'disabled':''}>${Array.from({length:i.q+1},(_,n)=>`<option ${n===i.g?'selected':''}>${n}</option>`).join('')}</select></div></div>`).join('')}
- ${phCard(o,'delivery')}
+ ${o.type==='takeaway'?'':phCard(o,'delivery')}
  ${o.done?'':`<div class="card">${S.fin===true?`<div class="r"><b style="flex:1">Завершить заказ?</b><button class="sm" data-a="no">Отмена</button><button class="sm" style="background:var(--ok);color:#fff" data-a="yes">Да</button></div>`:`<button class="big ${fb?'':'g'}" data-a="fin" ${fb?'disabled':''}>${fb||'Завершить заказ'}</button>`}</div>`}
  <button class="lnk" data-a="rm">${S.fin==='del'?'Нажмите ещё раз: заказ и обе фотографии удалятся':'Удалить заказ'}</button>`}
 function renderViewer(){const v=S.viewer,el=$('#vw');let src=null,title='';
- if(v&&v.draft){src=S.d&&S.d.photo;title='Фото чека (черновик)'}else if(v){const o=S.orders.find(x=>x.id===v.id);src=o&&S.ph[v.id+':'+v.k];title=(v.k==='receipt'?'Фото чека':'Фото готовой доставки')+(o?' · заказ № '+o.no:'')}
+ if(v&&v.draft){src=S.d&&S.d.photo;title=S.d&&S.d.origin==='screenshot'?'Скриншот официанта (черновик)':'Фото чека (черновик)'}else if(v){const o=S.orders.find(x=>x.id===v.id);src=o&&S.ph[v.id+':'+v.k];title=(v.k==='receipt'?(o&&o.type==='takeaway'?'Скриншот официанта':'Фото чека'):'Фото готовой доставки')+(o?' · заказ № '+o.no:'')}
  if(!src){S.viewer=null;el.innerHTML='';return}
  el.innerHTML=`<div class="vw"><div class="vb"><b style="flex:1">${esc(title)}</b><button class="sm" data-a="zoom">${v.z?'Уменьшить':'Увеличить'}</button><button class="sm" data-a="vclose">Закрыть</button></div><div class="vs"><img src="${src}" style="width:${v.z?'250%':'100%'}" alt=""></div></div>`}
 async function loadPhotos(o){for(const k of['receipt','delivery']){if(!(k==='receipt'?o.hasReceipt:o.hasDelivery)||S.ph[o.id+':'+k])continue;const d=DBX?await DBX.getPhoto(o.id,k):null;S.ph[o.id+':'+k]=d||false}if(S.v==='order'&&S.id===o.id)render()}
@@ -80,9 +80,9 @@ function ocrCard(){const o=S.ocr||{},d=S.d,r=d.ocrRes;let h=`<div class="card"><
  if(o.busy)h+=`<div class="mu" id="ocrstep">${esc(o.step||'Подготовка…')}</div><div class="bar"><i id="ocrbar" style="width:${Math.round((o.pct||0)*100)}%"></i></div><div class="r"><button class="sm" data-a="ocrstop">Остановить</button></div><div class="mu">Фото не отправляется на сервер. При первом запуске скачиваются файлы модели (нужен интернет), потом распознавание идёт на телефоне.</div>`;
  else{if(o.msg)h+=`<div class="mu">${esc(o.msg)}</div>`;
   if(r)h+=r.engine&&r.engine!=='tesseract'?`<div class="mu">${esc(r.best)} · ${r.sec.toFixed(1)} с · строк: ${r.boxes||'—'}${r.rot?` · наклон ${r.rot}° исправлен`:''}${r.load&&r.load.loadMs?` · загрузка модели ${(r.load.loadMs/1000).toFixed(1)} с`:''}</div>`:`<div class="mu">Tesseract · проходов: ${r.runs.length} · выбран «${esc(r.best)}» · ${Math.round(r.sec)} с · область: ${r.mode==='manual'?'ваша рамка':r.mode==='text-box'?'найдена автоматически':'весь кадр'}</div>`;
-  if(r&&r.engine==='neural'&&d.quality!=='good')h+=`<div class="r"><button class="sm" data-a="ocrfb">Сверить резервным Tesseract (дольше)</button></div><div class="mu">Нейросеть не подтвердила итог чека или номер. Резервный проход Tesseract объединится с её результатом.</div>`;
+  if(r&&r.engine==='neural'&&d.origin!=='screenshot'&&d.quality!=='good')h+=`<div class="r"><button class="sm" data-a="ocrfb">Сверить резервным Tesseract (дольше)</button></div><div class="mu">Нейросеть не подтвердила итог чека или номер. Резервный проход Tesseract объединится с её результатом.</div>`;
   if(d.ocrSrc)h+=`<div class="r"><span class="mu">Движок:</span><button class="sm ${S.engine==='neural'?'ok2':''}" data-a="eng" data-e="neural">Нейросеть</button><button class="sm ${S.engine==='tesseract'?'ok2':''}" data-a="eng" data-e="tesseract">Tesseract</button></div>`;
-  h+=d.ocrSrc?`<div class="r"><button class="sm" data-a="ocr">Распознать заново</button><button class="sm" data-a="cropopen">✂ Обрезать и заново</button></div>`:'<div class="mu">Фото нет: введите позиции вручную.</div>';
+  h+=d.ocrSrc?`<div class="r"><button class="sm" data-a="ocr">Распознать заново</button><button class="sm" data-a="cropopen">✂ Обрезать и заново</button></div>${d.origin==='screenshot'?'<div class="mu">Если строки распознаны плохо, попробуйте другой движок и уточните позиции вручную.</div>':''}`:'<div class="mu">Фото нет: введите позиции вручную.</div>';
   if(r)h+=`<div class="r"><button class="lnk" data-a="diag" style="padding:4px 0">Скопировать диагностику OCR</button></div>`}
  return h+'</div>'}
 /* 012: компактный счётчик; длинные карточки не нужны — правильно распознанные позиции не требуют действий */
@@ -100,6 +100,7 @@ function itemCard(x,k){const need=GP.needsOk(x,true),hd=GP.hard(x),cut=x.kind===
  const alts=(x.alts||[]).map((n,j)=>({n,j})).filter(z=>{const m=GPM.match(z.n,S.idx);return!(m.st==='o'&&(m.name===x.name||(x.cand||[]).includes(m.name)))&&uniqN(z.n)}).slice(0,2).map(({n,j})=>`<button class="sm" data-a="alt" data-i="${k}" data-j="${j}">Другое прочтение «${esc(n)}»</button>`).join('');
  const srch=pk?`<div class="srch"><input data-f="sq" placeholder="Поиск по справочнику" value="${esc(S.srch.q)}" autocomplete="off">${GPM.search(S.srch.q||x.name,S.idx,6).map((r,j)=>`<div class="res" data-a="pickd" data-i="${k}" data-k="${esc(r.d.k)}"><b>${esc(r.n)}</b><span class="mu"> ${esc(r.c)}</span></div>`).join('')||'<div class="mu">Ничего не найдено</div>'}<div class="r"><button class="sm" data-a="srchx">Закрыть</button></div></div>`:'';
  return`<div class="card it ${need&&!x.cf?'wn':''}"><textarea class="nm" data-f="n" data-i="${k}" rows="${Math.max(1,Math.ceil(x.name.length/30))}" placeholder="Название" enterkeyhint="done">${esc(x.name)}</textarea>
+ ${x.takeaway?'<div class="mu">🥡 Отмечено «навынос» на скриншоте</div>':''}
  <div class="r"><select data-f="q" data-i="${k}">${qopts(x.qty)}</select><span class="mu">шт.</span>${tag}<span style="flex:1"></span><button class="dl" data-a="del" data-i="${k}">✕</button></div>${was}
  ${hd.length?`<div class="tg s">${hd.map(esc).join('; ')}</div>`:''}
  ${!cut&&x.st!=='o'?`<div class="r">${cands}${alts}<button class="sm" data-a="srch" data-i="${k}">🔍 Из справочника</button>${x.name.trim()?`<button class="sm" data-a="adddict" data-i="${k}">В справочник</button>`:''}</div>`:''}${srch}
@@ -107,20 +108,20 @@ function itemCard(x,k){const need=GP.needsOk(x,true),hd=GP.hard(x),cut=x.kind===
  ${need?(x.cf?'<div class="tg o">✓ Подтверждено</div>':`<div class="r"><button class="sm ok2" data-a="cf" data-i="${k}">${x.st==='o'?'Подтверждаю позицию':'Оставить как есть'}</button></div>`):''}</div>`}
 function idWarn(d,lab){const w=(d.warn||[]).find(x=>x.startsWith(lab+' прочитан'));if(!w)return'';const m=w.match(/\(([^)]*)\): выбран (\d+)/);return`<div class="tg s" style="margin:4px 0 8px">${m?`Проходы OCR прочитали по-разному: ${esc(m[1])}. Выбран ${esc(m[2])} — сверьте с фото.`:esc(w)}</div>`}
 function vRev(){const d=S.d,on=true,er=GP.validate(d,on),o=S.ocr||{},q=d.quality&&QL[d.quality],dr=(d.dropped||[]).filter(l=>/[а-яё]{3}/i.test(l)&&l.replace(/[^а-яёa-z0-9]/gi,'').length>=6);
- return`<div class="top"><button class="ib" data-a="home">‹</button><h1>Проверка чека</h1></div>${S.msg?`<div class="bn">${S.msg}</div>`:''}
- ${d.photo?`<div class="thumb"><img src="${d.photo}" data-a="viewd" alt="Фото чека"><div class="mu">Нажмите на фото, чтобы увеличить и сверить чек</div></div>`:''}
+ return`<div class="top"><button class="ib" data-a="home">‹</button><h1>${d.origin==='screenshot'?'Проверка скриншота':'Проверка чека'}</h1></div>${S.msg?`<div class="bn">${S.msg}</div>`:''}
+ ${d.photo?`<div class="thumb"><img src="${d.photo}" data-a="viewd" alt="Фото чека"><div class="mu">Нажмите на изображение, чтобы увеличить и сверить ${d.origin==='screenshot'?'заказ':'чек'}</div></div>`:''}
  ${ocrCard()}
- ${q&&!o.busy?`<div class="card ${q[1]}"><b>${esc(q[0])}</b></div>`:''}
+ ${q&&!o.busy&&d.origin!=='screenshot'?`<div class="card ${q[1]}"><b>${esc(q[0])}</b></div>`:''}
  ${(d.warn||[]).filter(w=>!/^(Дополнительный ID|Номер предчека) прочитан/.test(w)).map(w=>`<div class="bn">${esc(w)}</div>`).join('')}
- <div class="card"><label>Номер предчека<input data-f="no" inputmode="numeric" value="${esc(d.no)}"></label>${idWarn(d,'Номер предчека')}<label style="margin:0">Дополнительный ID<input data-f="ex" inputmode="numeric" value="${esc(d.ex)}" class="${(d.warn||[]).some(w=>w.startsWith('Дополнительный ID прочитан'))?'wnf':''}"></label>${idWarn(d,'Дополнительный ID')}</div>
- ${d.notes?`<div class="card"><label style="margin:0">Комментарий повару<textarea data-f="notes" style="min-height:60px">${esc(d.notes)}</textarea></label></div>`:''}
+ <div class="card">${d.origin==='screenshot'?`<b>🥡 Заказ навынос</b><div class="mu" style="margin-top:5px">${d.noSource==='local'?'Номер создан автоматически: можно заменить на номер заказа со скриншота.':'Номер взят со скриншота — проверьте его.'}</div><label>Номер заказа<input data-f="no" inputmode="numeric" value="${esc(d.no)}"></label><label>Официант<input data-f="waiter" value="${esc(d.waiter||'')}" placeholder="Кто передал заказ"></label><label>К какому времени (необязательно)<input data-f="due" value="${esc(d.due||'')}" placeholder="Например, 14:30"></label><div class="mu" style="margin:8px 0">${d.screenMode==='table'?'Формат: таблица кассы · ПЦ = количество, Сумма = цена':d.screenMode==='card'?'Формат: карточки блюд с пометками «+ навынос»':'Распознавание скриншота'}</div><div class="r"><label style="flex:1">Стол (необязательно)<input data-f="table" inputmode="numeric" value="${esc(d.table||'')}" placeholder="№ стола"></label><label style="flex:1">Гость (необязательно)<input data-f="guest" inputmode="numeric" value="${esc(d.guest||'')}" placeholder="№ гостя"></label></div>`:`<label>Номер предчека<input data-f="no" inputmode="numeric" value="${esc(d.no)}"></label>${idWarn(d,'Номер предчека')}<label style="margin:0">Дополнительный ID<input data-f="ex" inputmode="numeric" value="${esc(d.ex)}" class="${(d.warn||[]).some(w=>w.startsWith('Дополнительный ID прочитан'))?'wnf':''}"></label>${idWarn(d,'Дополнительный ID')}`}</div>
+ ${d.notes||d.origin==='screenshot'?`<div class="card"><label style="margin:0">Комментарий к заказу / упаковке<textarea data-f="notes" style="min-height:60px">${esc(d.notes||'')}</textarea></label></div>`:''}
  ${revSummary(d)}
  ${d.items.map((x,k)=>itemCard(x,k)).join('')}
  <button class="lnk" data-a="addrow">+ Добавить позицию</button>
- ${(d.skipped||[]).length?`<div class="card wn"><b>Строки таблицы, не вошедшие в позиции</b><div class="mu">Это могут быть блюда с плохо прочитанными цифрами. Добавьте строку как позицию или уберите её.</div>${d.skipped.map((s,k)=>`<div class="r"><span style="flex:1">${esc(s.line)}</span><button class="sm" data-a="sk-add" data-i="${k}">Позиция</button><button class="dl" data-a="sk-rm" data-i="${k}">✕</button></div>`).join('')}</div>`:''}
+ ${(d.skipped||[]).length?`<div class="card wn"><b>${d.origin==='screenshot'?'Неразобранные строки скриншота':'Строки таблицы, не вошедшие в позиции'}</b><div class="mu">${d.origin==='screenshot'?'Проверьте: здесь могут быть блюда, которые приложение не смогло сопоставить. Добавьте или уберите каждую строку.':'Это могут быть блюда с плохо прочитанными цифрами. Добавьте строку как позицию или уберите её.'}</div>${d.skipped.map((s,k)=>`<div class="r"><span style="flex:1">${esc(s.line)}</span><button class="sm" data-a="sk-add" data-i="${k}">Позиция</button><button class="dl" data-a="sk-rm" data-i="${k}">✕</button></div>`).join('')}</div>`:''}
  ${dr.length?`<details class="card"><summary>Текст вне таблицы, похожий на слова (${dr.length})</summary><div class="mu">Это не позиции: шапка, реклама, комментарии. Показано для проверки, что блюдо не потерялось.</div>${dr.slice(0,25).map(l=>`<div class="r"><span style="flex:1;font-size:14px">${esc(l)}</span><button class="sm" data-a="dr-add" data-t="${esc(l)}">Позиция</button></div>`).join('')}</details>`:''}
  ${(d.warn||[]).length?`<div class="card"><label style="margin:0;display:flex;gap:10px;align-items:center;color:var(--tx)"><input type="checkbox" data-f="warnok" style="width:24px;height:24px" ${d.warnOk?'checked':''}>Я сверил(а) номер, позиции и количества с фото</label></div>`:''}
- <details class="card"><summary>Текст чека (результат OCR)</summary><label style="margin:8px 0 0">Можно править или вставить свой<textarea data-f="txt" placeholder="Текст чека">${esc(d.txt||'')}</textarea></label><div class="r"><button class="sm" data-a="parse">Разобрать текст</button></div></details>
+ <details class="card"><summary>${d.origin==='screenshot'?'Текст скриншота (OCR)':'Текст чека (результат OCR)'}</summary><label style="margin:8px 0 0">Можно править или вставить свой<textarea data-f="txt" placeholder="Текст чека">${esc(d.txt||'')}</textarea></label><div class="r"><button class="sm" data-a="parse">Разобрать текст</button></div></details>
  ${er.length?`<div class="card"><ul class="er">${er.slice(0,5).map(e=>`<li>${esc(e)}</li>`).join('')}</ul></div>`:''}
  ${S.saveErr?`<div class="bn">${esc(S.saveErr)}</div>`:''}
  <div class="fab rv">${(()=>{const c=revCounts(d);return c.n?`<div class="fabc">✓ ${c.ok} из ${d.items.length}${c.left?` · ⚠ осталось проверить ${c.left}`:''}${er.length&&!c.left?' · '+esc(er[0]):''}</div>`:''})()}<button class="big" data-a="create" ${er.length||S.busy||o.busy?'disabled':''}>Создать заказ</button></div>`}
@@ -163,9 +164,37 @@ const go=v=>{S.v=v;S.msg='';S.saveErr='';S.repl=0;S.fin=false;scrollTo(0,0);rend
 /* ---------- Фото и OCR ---------- */
 function shrink(f,mx,q){return new Promise(r=>{const fr=new FileReader();fr.onload=()=>{const i=new Image();i.onload=()=>{const k=Math.min(1,mx/Math.max(i.width,i.height)),c=document.createElement('canvas');c.width=i.width*k;c.height=i.height*k;c.getContext('2d').drawImage(i,0,0,c.width,c.height);r(c.toDataURL('image/jpeg',q))};i.onerror=()=>r(null);i.src=fr.result};fr.onerror=()=>r(null);fr.readAsDataURL(f)})}
 const decode=u=>new Promise((ok,no)=>{const i=new Image();i.onload=()=>{const c=document.createElement('canvas');c.width=i.naturalWidth;c.height=i.naturalHeight;const x=c.getContext('2d');x.drawImage(i,0,0);const id=x.getImageData(0,0,c.width,c.height);ok({w:c.width,h:c.height,d:id.data})};i.onerror=()=>no(new Error('не удалось открыть фото'));i.src=u});
-function applyParse(d){const r=GP.parse(d.txt||'');fillFrom(d,r);return r}
+function applyParse(d){const r=d.origin==='screenshot'?GPS.parse(d.txt||'',{matcher:GPM,idx:S.idx}):GP.parse(d.txt||'');if(d.origin==='screenshot')fillScreenshot(d,r);else fillFrom(d,r);return r}
 function fillFrom(d,p){if(p.no)d.no=p.no;d.ex=p.ex||d.ex||'';d.items=p.items.length?p.items.map(x=>({...x,cf:false})):[blank()];d.skipped=p.skipped;d.dropped=p.dropped;d.notes=p.notes||d.notes||'';d.warn=[...p.warn];d.quality=p.quality;d.warnOk=false;
  if(p.quality!=='good'&&!p.check)d.warn.push(p.items.length?'Итог чека не найден или не подтвердил сумму позиций: сверьте каждую позицию с фото.':'Позиции в тексте не найдены.');recheck(d)}
+/* 015: скриншоты официантов — отдельный режим OCR, без предположения о структуре предчека. */
+function fillScreenshot(d,p){
+ d.items=p.items.length?p.items:[blank()];d.skipped=p.skipped;d.dropped=[];d.warn=[...p.warn];d.warnOk=false;d.quality='';d.ex='';
+ if(p.no){d.no=p.no;d.noSource='screenshot'}
+ d.table=p.table||d.table||'';d.guest=p.guest||d.guest||'';d.screenMode=p.mode||'';
+ if(p.notes&&!d.notes)d.notes=p.notes;
+ recheck(d);
+ // Количество «1» без явного указания в скриншоте требует ручного подтверждения, даже если название есть в базе.
+}
+async function runScreenshotOcr(opts){
+ opts=opts||{};const d=S.d;if(!d||d.origin!=='screenshot'||!d.ocrSrc||S.ocr.busy)return;
+ const run={cancel:false};S.ocr={busy:true,run,step:'Чтение скриншота…',pct:0,msg:''};render();
+ const eng=opts.engine||S.engine,quad=opts.quad===undefined?(d.quad||null):opts.quad;
+ let res,used='',note='';
+ try{
+  const src=await decode(d.ocrSrc);
+  if(eng==='neural'&&window.NEURAL_WEB){try{
+   const nr=await NEURAL_WEB.recognize(src,{quad,onProgress:ev=>ocrProgress(run,ev),cancelled:()=>run.cancel});
+   res={text:nr.text,layout:nr.lines,width:nr.size&&nr.size[0],ms:nr.ms.total,boxes:nr.boxes,rot:nr.rot,load:nr.load};used='neural';
+  }catch(e){if(run.cancel)throw e;note='Нейросеть недоступна, переключено на Tesseract. ';}}
+  if(!res){const t0=performance.now(),gray=IMG.gray(src),tr=await OCR.recognize(gray,{psm:11},p=>ocrProgress(run,{phase:'variant',run:1,runs:1,pct:p,label:'Tesseract: чтение скриншота'}));
+   const gl=tr.words&&tr.words.length?GP.linesFromWords(tr.words):null;res={text:gl&&gl.text||tr.text,layout:gl&&gl.lines?gl.lines.map(l=>({...l,parts:l.w})):null,width:gray.w,ms:performance.now()-t0,boxes:tr.words.length,rot:0};used='tesseract'}
+ }catch(e){if(S.d!==d)return;S.ocr={msg:run.cancel?'Распознавание остановлено.':'Скриншот не распознан: '+e.message+'. Введите позиции вручную.'};return render()}
+ if(S.d!==d)return;if(run.cancel){S.ocr={msg:'Распознавание остановлено.'};return render()}
+ d.txt=res.text;const p=GPS.parse(res.text,{matcher:GPM,idx:S.idx,layout:res.layout,width:res.width});fillScreenshot(d,p);
+ d.ocrRes={engine:used,best:used==='neural'?'Нейросеть · скриншот':'Tesseract · скриншот',sec:res.ms/1000,boxes:res.boxes,rot:res.rot,load:res.load,runs:[{id:used}],mode:'screenshot',diag:'GONER PACK 016 · Скриншот ('+p.mode+')\n'+res.text};
+ S.ocr={msg:note+(p.items.length?`Найдено позиций: ${p.items.length}. Неоднозначные строки: ${p.skipped.length}. Проверьте скриншот перед созданием заказа.`:'Блюда не определены уверенно. Добавьте позиции вручную по скриншоту.')};render();
+}
 function ocrProgress(run,ev){if(run.cancel)return;const o=S.ocr;o.pct=ev.pct||0;const ph=ev.phase==='variant'?`Проход ${ev.run} из ${ev.runs}: ${ev.label}`:ev.label||'Подготовка';o.step=ph+(ev.pct?` — ${Math.round(ev.pct*100)}%`:'');const a=$('#ocrstep'),b=$('#ocrbar');if(a)a.textContent=o.step;if(b)b.style.width=Math.round((ev.phase==='variant'?(((ev.run-1)+(ev.pct||0))/ev.runs):ev.phase==='neural-load'?(ev.pct||0)*.3:ev.phase==='neural-det'?.35:ev.phase==='neural-rec'?.4+(ev.pct||0)*.6:(ev.pct||0)*.2)*100)+'%'}
 /* 013: движок по умолчанию — нейросеть (Neural OCR). Tesseract 012 — резервный: выбирается вручную, по кнопке «Сверить резервным Tesseract»
    или автоматически, только если нейросеть не загрузилась (нет интернета при первом запуске, старый браузер). */
@@ -184,7 +213,7 @@ async function runOcr(opts){opts=opts||{};const d=S.d;if(!d||!d.ocrSrc||S.ocr.bu
  S.ocr={msg:note+(res.parsed.items.length?'Готово. Проверьте номер, ID и позиции по фото: заказ автоматически не создаётся.':'Позиции не найдены.')};render()}
 /* ---------- События ---------- */
 document.addEventListener('click',async e=>{const b=e.target.closest('[data-a]');if(!b)return;const a=b.dataset.a,i=+b.dataset.i,o=S.orders.find(x=>x.id===S.id),d=S.d;
- if(a==='home'){if(S.ocr.run)S.ocr.run.cancel=true;if(S.ocr.busy)OCR.cancel();S.ocr={};go('home')}else if(a==='dict')go('dict');else if(a==='learnview')go('learn');else if(a==='scan')$('#fi').click();else if(a==='imp')$('#fd').click();
+ if(a==='home'){if(S.ocr.run)S.ocr.run.cancel=true;if(S.ocr.busy)OCR.cancel();S.ocr={};go('home')}else if(a==='dict')go('dict');else if(a==='learnview')go('learn');else if(a==='take')$('#fs').click();else if(a==='scan')$('#fi').click();else if(a==='imp')$('#fd').click();
  else if(a==='manual'){S.d={id:newId(),no:'',ex:'',photo:null,items:[blank()],skipped:[]};S.ocr={};go('rev')}
  else if(a==='open'){S.id=+b.dataset.id;S.phErr=null;go('order');loadPhotos(S.orders.find(x=>x.id===S.id))}
  else if(a==='view'){S.viewer={id:o.id,k:b.dataset.k,z:0};render()}else if(a==='zoom'){S.viewer.z=S.viewer.z?0:1;renderViewer()}else if(a==='vclose'){S.viewer=null;renderViewer()}
@@ -195,14 +224,14 @@ document.addEventListener('click',async e=>{const b=e.target.closest('[data-a]')
  else if(a==='fin'){S.fin=true;render()}else if(a==='no'){S.fin=false;render()}
  else if(a==='yes'){if(!GPC.canFinish(o)){S.fin=false;toast(GPC.finishBlock(o),1);return render()}if(!DBX||!await DBX.putOrder({...o,done:true})){S.fin=false;toast('Завершение заказа НЕ сохранено',1);return render()}o.done=true;S.fin=false;go('home')}
  else if(a==='rm'){if(S.fin==='del'){if(!(DBX&&await DBX.deleteOrder(o.id))){S.fin=false;toast('Не удалось удалить заказ и фото',1);return render()}S.orders=S.orders.filter(x=>x!==o);delete S.ph[o.id+':receipt'];delete S.ph[o.id+':delivery'];go('home')}else{S.fin='del';render()}}
- else if(a==='ocr')runOcr();
- else if(a==='ocrfb')runOcr({engine:'fallback'});
+ else if(a==='ocr')(d&&d.origin==='screenshot'?runScreenshotOcr():runOcr());
+ else if(a==='ocrfb')(d&&d.origin==='screenshot'?runScreenshotOcr({engine:'tesseract'}):runOcr({engine:'fallback'}));
  else if(a==='eng'){S.engine=b.dataset.e;try{localStorage.setItem('gp-engine',S.engine)}catch(e){}render()}
  else if(a==='ocrstop'){if(S.ocr.run)S.ocr.run.cancel=true;OCR.cancel()}
  else if(a==='cropopen')cropOpen();else if(a==='cropback'){go('rev')}
  else if(a==='cropreset'){CR.q=cropDefault();cropDraw()}
- else if(a==='cropauto'){d.quad=null;go('rev');runOcr({quad:null})}
- else if(a==='cropgo'){const q=CR.q;if(!IMG.isConvex(q))return toast('Рамка перекручена: потяните углы так, чтобы получился обычный четырёхугольник',1);d.quad=q.map(p=>[p[0],p[1]]);go('rev');runOcr({quad:d.quad})}
+ else if(a==='cropauto'){d.quad=null;go('rev');(d.origin==='screenshot'?runScreenshotOcr({quad:null}):runOcr({quad:null}))}
+ else if(a==='cropgo'){const q=CR.q;if(!IMG.isConvex(q))return toast('Рамка перекручена: потяните углы так, чтобы получился обычный четырёхугольник',1);d.quad=q.map(p=>[p[0],p[1]]);go('rev');(d.origin==='screenshot'?runScreenshotOcr({quad:d.quad}):runOcr({quad:d.quad}))}
  else if(a==='viewd'){S.viewer={draft:true,z:0};render()}
  else if(a==='dr-add'){d.items.push({name:b.dataset.t,qty:0,kind:'dish',doubt:['добавлено вручную из текста вне таблицы'],cf:false,st:'u'});recheck(d);render()}
  else if(a==='diag'){const t=d.ocrRes&&d.ocrRes.diag||'';try{await navigator.clipboard.writeText(t);toast('Диагностика скопирована')}catch(e){const ta=document.createElement('textarea');ta.value=t;document.body.appendChild(ta);ta.select();try{document.execCommand('copy');toast('Диагностика скопирована')}catch(_){toast('Не удалось скопировать',1)}ta.remove()}}
@@ -236,22 +265,23 @@ document.addEventListener('click',async e=>{const b=e.target.closest('[data-a]')
   const rec={k,n,c:GPD.clean(e.c),a:GPD.uniq(e.a.split(/\n+/)),src:old.src==='import'?'import':old.src==='user'?'user':'edit'};if(k!==e.k&&!await dictDrop(e.k))return;if(await dictPut(rec)){S.edit=null;if(S.d)recheck(S.d);render()}}
  else if(a==='cf'){d.items[i].cf=true;render()}
  else if(a==='adddict'){await addDict(d.items[i].name,'');recheck(d);render()}
- else if(a==='sk-add'){d.items.push({name:d.skipped[i].line,qty:0,kind:'dish',doubt:['добавлено из пропущенных строк'],cf:false,st:'u'});d.skipped.splice(i,1);recheck(d);render()}
+ else if(a==='sk-add'){const raw=d.skipped[i].line,parsed=d.origin==='screenshot'?GPS.parseLine(raw,GPM,S.idx):null;d.items.push({name:parsed?parsed.name:raw,qty:parsed?parsed.qty:0,kind:'dish',ocr:parsed?parsed.name:raw,doubt:['добавлено вручную из непроверенной строки'],cf:false,st:'u'});d.skipped.splice(i,1);recheck(d);render()}
  else if(a==='sk-rm'){d.skipped.splice(i,1);render()}
  else if(a==='create'){if(S.busy)return;const on=S.dict.length>0;if(GP.validate(d,on).length)return render();
-  const mg=[];d.items.forEach(x=>{const y=mg.find(z=>norm(z.n)===norm(x.name)&&z.k===x.kind);y?y.q+=x.qty:mg.push({n:x.name.trim(),q:x.qty,g:0,k:x.kind})});
-  const n={id:d.id,no:d.no.trim(),ex:String(d.ex||'').trim(),note:String(d.notes||'').trim(),t:Date.now(),items:mg,done:false,hasReceipt:!!d.photo,hasDelivery:false};
+  const mg=[];d.items.forEach(x=>{const y=mg.find(z=>norm(z.n)===norm(x.name)&&z.k===x.kind);y?(y.q+=x.qty,y.takeaway=y.takeaway||!!x.takeaway):mg.push({n:x.name.trim(),q:x.qty,g:0,k:x.kind,takeaway:!!x.takeaway})});
+  const n={id:d.id,no:d.no.trim(),ex:String(d.ex||'').trim(),note:String(d.notes||'').trim(),table:String(d.table||'').trim(),guest:String(d.guest||'').trim(),type:d.origin==='screenshot'?'takeaway':'delivery',origin:d.origin||'receipt',waiter:String(d.waiter||'').trim(),due:String(d.due||'').trim(),t:Date.now(),items:mg,done:false,hasReceipt:!!d.photo,hasDelivery:false};
   S.busy=true;render();const ok=DBX?await DBX.createOrder(n,d.photo||null):false;S.busy=false;
   if(!ok){S.saveErr='Заказ НЕ создан: запись в память телефона не удалась'+(DBX?'':' (память недоступна)')+'. Нажмите «Создать заказ», чтобы повторить.';toast('Заказ не создан',1);return render()}
   S.orders.push(n);if(d.photo)S.ph[n.id+':receipt']=d.photo;S.id=n.id;S.d=null;S.ocr={};go('order')}
  else if(a==='dadd'){if(await addDict(S.dn,S.dcat)){S.dn='';S.dcat=''}if(S.d)recheck(S.d);render()}});
 document.addEventListener('change',async e=>{const t=e.target,f=t.dataset.f,i=+t.dataset.i,d=S.d;
  if((t.id==='fc'||t.id==='fg')&&t.files[0]){const fl=t.files[0],o=S.orders.find(x=>x.id===S.pick);t.value='';if(!o||o.done||(!o.hasDelivery&&!GPC.canAddDelivery(o)))return toast('Сейчас добавить фото нельзя',1);const data=await shrink(fl,1280,.78);if(!data)return toast('Не удалось прочитать фото',1);await saveDelivery(o,data)}
+ else if(t.id==='fs'&&t.files[0]){const fl=t.files[0],p=await shrink(fl,1800,.9),big=await shrink(fl,2600,.95);t.value='';if(!p||!big)return toast('Не удалось открыть скриншот',1);if(S.ocr.busy){S.ocr.run.cancel=true;OCR.cancel()};S.d={id:newId(),origin:'screenshot',orderType:'takeaway',no:String(Date.now()).slice(-8),noSource:'local',ex:'',waiter:'',due:'',table:'',guest:'',notes:'',photo:p,ocrSrc:big,items:[blank()],skipped:[],dropped:[],warn:[],quad:null};S.ocr={};go('rev');runScreenshotOcr()}
  else if(t.id==='fi'&&t.files[0]){const fl=t.files[0],p=await shrink(fl,1800,.82),big=await shrink(fl,2400,.92);t.value='';if(!p)return toast('Не удалось прочитать фото',1);if(S.ocr.busy){S.ocr.run.cancel=true;OCR.cancel()}S.d={id:newId(),no:'',ex:'',photo:p,ocrSrc:big,items:[blank()],skipped:[],dropped:[],warn:[],quad:null};S.ocr={};go('rev');runOcr()}
  else if(t.id==='fd'&&t.files[0]){await importDict(t.files[0]);t.value=''}
  else if(f==='g'){const o=S.orders.find(x=>x.id===S.id);o.items[i].g=+t.value;saveOrder(o);render()}
  else if(f==='warnok'){d.warnOk=t.checked;render()}else if(f==='notes'){d.notes=t.value}
- else if(f==='no'){d.no=t.value;render()}else if(f==='ex'){d.ex=t.value;render()}
+ else if(f==='waiter'){d.waiter=t.value}else if(f==='due'){d.due=t.value}else if(f==='table'){d.table=t.value}else if(f==='guest'){d.guest=t.value}else if(f==='no'){d.no=t.value;d.noSource='manual';render()}else if(f==='ex'){d.ex=t.value;render()}
  else if(f==='n'){const x=d.items[i];if(x.ocr===undefined)x.ocr=x.name;x.name=t.value;x.userEdited=GPL.key(t.value)!==GPL.key(x.ocr);x.learned=false;x.fixed=x.userEdited?x.ocr:undefined;x.cf=false;recheck(d);render()}
  else if(f==='q'){d.items[i].qty=+t.value;render()}});
 document.addEventListener('keydown',e=>{if(e.key==='Enter'&&e.target.classList&&e.target.classList.contains('nm')){e.preventDefault();e.target.blur()}});

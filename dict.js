@@ -1,4 +1,4 @@
-/* GONER PACK 010: справочник блюд — слияние встроенной базы с локальными правками, импорт CSV/TSV/TXT/XLSX (без интернета), экспорт.
+/* GONER PACK 010 (+017: колонка «Цена за ед.» в CSV/Excel): справочник блюд — слияние встроенной базы с локальными правками, импорт CSV/TSV/TXT/XLSX (без интернета), экспорт.
    Хранение: встроенные записи лежат в коде (dict-seed.js); в IndexedDB (хранилище dict) — только правки пользователя:
    {k,n,c,a,src:'user'|'import'|'edit'} — своя/изменённая запись, {k,del:true} — «надгробие» удалённой встроенной записи. Схема БД не менялась. */
 (function(r,f){const m=f();if(typeof module==='object'&&module.exports)module.exports=m;else r.GPD=m})(typeof self!=='undefined'?self:this,function(){
@@ -15,8 +15,8 @@ function parseCSV(text){text=String(text).replace(/^﻿/,'');const first=text.sp
   if(q){if(c==='"'){if(text[i+1]==='"'){cur+='"';i++}else q=false}else cur+=c}
   else if(c==='"')q=true;else if(c===d){row.push(cur);cur=''}else if(c==='\n'||c==='\r'){if(c==='\r'&&text[i+1]==='\n')i++;row.push(cur);rows.push(row);row=[];cur=''}else cur+=c}
  if(cur!==''||row.length){row.push(cur);rows.push(row)}return rows.filter(r=>r.some(c=>clean(c)))}
-function toCSV(items){const e=v=>{v=String(v==null?'':v);return/[";\n\r]/.test(v)?'"'+v.replace(/"/g,'""')+'"':v};
- return'﻿'+[['Раздел','Название позиции','Алиасы (через |)','Источник'],...items.map(x=>[x.c,x.n,(x.a||[]).join('|'),x.src==='seed'?x.s||'Встроенный':x.src==='import'?'Импорт':'Добавлено вручную'])].map(r=>r.map(e).join(';')).join('\r\n')+'\r\n'}
+function toCSV(items,prices){const e=v=>{v=String(v==null?'':v);return/[";\n\r]/.test(v)?'"'+v.replace(/"/g,'""')+'"':v},P=prices||new Map(),d=t=>{try{return new Date(t).toISOString().slice(0,10)}catch(_){return''}};
+ return'\ufeff'+[['Раздел','Название позиции','Алиасы (через |)','Источник','Цена за ед.','Цена от'],...items.map(x=>{const p=P.get&&P.get(x.k);return[x.c,x.n,(x.a||[]).join('|'),x.src==='seed'?(x.s||'Встроенный'):x.src==='import'?'Импорт':'Добавлено вручную',p?p.unit.toFixed(2):'',p?d(p.t):'']})].map(r=>r.map(e).join(';')).join('\r\n')+'\r\n'}
 /* ---- XLSX: минимальный читатель (zip + XML), без библиотек. Читает ВСЕ листы. ---- */
 const u16=(b,o)=>b[o]|b[o+1]<<8,u32=(b,o)=>(b[o]|b[o+1]<<8|b[o+2]<<16|b[o+3]<<24)>>>0,dec=new TextDecoder('utf-8');
 async function inflate(raw){if(typeof DecompressionStream==='undefined')throw new Error('браузер не умеет распаковывать Excel: сохраните справочник как CSV');
@@ -45,9 +45,9 @@ async function readXlsx(buf){const z=await unzip(buf);if(!z['xl/workbook.xml'])t
 /* ---- разбор таблицы в записи: заголовки определяются по названию колонок, иначе название = первая колонка ---- */
 function rowsToItems(rows,srcName){const H=rows[0]||[],hn=H.map(h=>clean(h).toLowerCase());
  const find=re=>hn.findIndex(h=>re.test(h)),iN=find(/назван|блюд|позици|наимен|продукт/),hasHead=iN>=0&&isNaN(H[iN]);
- const iC=hasHead?find(/раздел|категор|группа/):-1,iA=hasHead?find(/алиас|вариант|синоним|иначе/):-1,iS=hasHead?find(/источник/):-1,c0=hasHead?iN:0,out=[];
+ const iC=hasHead?find(/раздел|категор|группа/):-1,iA=hasHead?find(/алиас|вариант|синоним|иначе/):-1,iS=hasHead?find(/источник/):-1,iP=hasHead?find(/^цена(?!\s*от)/):-1,iPt=hasHead?find(/^цена\s*от/):-1,c0=hasHead?iN:0,out=[];
  for(const r of rows.slice(hasHead?1:0)){const n=clean(r[c0]);if(!n||!isNaN(n.replace(',','.'))||!/[а-яёa-z]/i.test(n))continue;
-  out.push({n,c:iC>=0?clean(r[iC]):'',a:iA>=0?uniq(String(r[iA]||'').split(/[|\n]+/)):[],s:iS>=0?clean(r[iS]):srcName||''})}
+  out.push({n,c:iC>=0?clean(r[iC]):'',a:iA>=0?uniq(String(r[iA]||'').split(/[|\n]+/)):[],s:iS>=0?clean(r[iS]):srcName||'',...(iP>=0&&+String(r[iP]||'').replace(',','.')>0?{p:+String(r[iP]).replace(',','.'),pt:iPt>=0&&Date.parse(r[iPt])||undefined}:{})})}
  return{items:out,column:hasHead?clean(H[iN]):'первая колонка'}}
 async function parseFile(name,buf){let sheets;
  if(/\.xlsx$/i.test(name)||(buf.byteLength>3&&new Uint8Array(buf,0,2)[0]===0x50&&new Uint8Array(buf,0,2)[1]===0x4b))sheets=await readXlsx(buf);

@@ -1,6 +1,6 @@
-/* GONER PACK 013: OCR LAB — сравнение Tesseract 012, Neural 013 и комбинированного результата на фото пользователя. */
+/* GONER PACK 013→017: OCR LAB — сравнение Tesseract 012, Neural 013 и комбинированного результата на фото пользователя. */
 (()=>{const $=s=>document.querySelector(s),esc=s=>String(s==null?'':s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
- const idx=GPM.index(GPD.build(GP_SEED.items,[])),match=n=>GPM.match(n,idx),L={results:[],texts:{}};window.LAB=L;
+ const dict=GPD.build(GP_SEED.items,[]),idx=GPM.index(dict),match=n=>GPM.match(n,idx),L={results:[],texts:{}};window.LAB=L;
  $('#tr').onchange=()=>{$('#ctl').style.display=/custom|1042498/.test($('#tr').value)?'':'none'};
  const st=(t,p)=>{$('#st').textContent=t;if(p!=null)$('#pb').style.width=Math.round(p*100)+'%'};
  async function decode(file,max){const bm=await createImageBitmap(file,{imageOrientation:'from-image'}).catch(()=>createImageBitmap(file)),k=Math.min(1,(max||2400)/Math.max(bm.width,bm.height)),c=document.createElement('canvas');c.width=Math.round(bm.width*k);c.height=Math.round(bm.height*k);
@@ -18,8 +18,8 @@
  function show(){const T=truth();L.results.forEach(r=>r.s=sc(r.p,r.ms,T));$('#out').innerHTML=table(T);const b=$('#cp');if(b)b.onclick=async()=>{const t=['GONER PACK 013 · OCR LAB',navigator.userAgent,'эталон: '+($('#tr').value||'нет'),...L.results.map(r=>r.name+': '+JSON.stringify(r.s)),...(L.neuralInfo?['нейросеть: '+JSON.stringify(L.neuralInfo)]:[])].join('\n');try{await navigator.clipboard.writeText(t);st('Скопировано')}catch(e){prompt('Скопируйте:',t)}}}
  $('#go').onclick=async()=>{const f=$('#ph').files[0];if(!f)return st('Выберите фото чека');$('#go').disabled=true;L.results=[];$('#out').innerHTML='';
   try{const src=await decode(f,2400);let nres=null,tres=null;
-   if($('#e2').checked||$('#e3').checked){st('Neural 013…',0);const t0=performance.now();try{const nr=await NEURAL_WEB.recognize(src,{onProgress:e=>st(e.label||'Нейросеть',e.phase==='neural-rec'?.4+(e.pct||0)*.6:e.phase==='neural-load'?(e.pct||0)*.3:.35)});L.neuralInfo={...nr.ms,load:nr.load,boxes:nr.boxes,rot:nr.rot};
-     nres=PIPE.fromNeural(nr,{match});if($('#e2').checked)L.results.push({name:'Neural 013',p:nres.parsed,ms:performance.now()-t0-((nr.load&&nr.load.loadMs)||0),text:nr.text})}catch(e){L.results.push({name:'Neural 013 — ошибка: '+e.message,p:{items:[]},ms:0,text:String(e.stack||e)})}show()}
+   if($('#e2').checked||$('#e3').checked){st('Neural 017…',0);const t0=performance.now();try{const nr=await NEURAL_WEB.recognize(src,{onProgress:e=>st(e.label||'Нейросеть',e.phase==='neural-rec'?.4+(e.pct||0)*.6:e.phase==='neural-load'?(e.pct||0)*.3:.35)});L.neuralInfo={...nr.ms,load:nr.load,boxes:nr.boxes,rot:nr.rot};
+     nres=PIPE.fromNeural(nr,{match,dict});await PIPE.refineNeural(nres,nr,{match,dict});if(nr.release)nr.release();GPR.review(nres.parsed,{idx,dict,rules:[],prices:[]});if($('#e2').checked)L.results.push({name:'Neural 017',p:nres.parsed,ms:performance.now()-t0-((nr.load&&nr.load.loadMs)||0),text:nr.text})}catch(e){L.results.push({name:'Neural 017 — ошибка: '+e.message,p:{items:[]},ms:0,text:String(e.stack||e)})}show()}
    if($('#e1').checked||$('#e3').checked){st('Tesseract 012…',0);const t0=performance.now();tres=await PIPE.recognizeReceipt(src,{recognize:(img,p,cb)=>OCR.recognize(img,p,cb),match,onProgress:e=>st(e.label||'Tesseract',e.phase==='variant'?((e.run-1)+(e.pct||0))/e.runs:null)});if($('#e1').checked)L.results.push({name:'Tesseract 012',p:tres.parsed,ms:performance.now()-t0,text:tres.best.text})}
    if($('#e3').checked&&nres&&tres){const m=PIPE.mergeEngines(nres,tres,{match});L.results.push({name:'Комбинированный',p:m.parsed,ms:nres.totalMs+tres.totalMs,text:nres.best.text})}
    st('Готово',1);show()}catch(e){st('Ошибка: '+e.message)}finally{$('#go').disabled=false}};

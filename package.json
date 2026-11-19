@@ -1,0 +1,15 @@
+{
+  "name": "goner-pack",
+  "version": "0.17.0",
+  "private": true,
+  "description": "GONER PACK: сборка заказов по фото предчеков (PWA). package.json нужен только для тестов и замеров, сайту он не нужен.",
+  "scripts": {
+    "test": "node --test tests/*.test.js",
+    "bench": "node tools/bench017.js"
+  },
+  "devDependencies": {
+    "fake-indexeddb": "^6.2.8",
+    "onnxruntime-web": "1.20.1",
+    "sharp": "^0.34.0"
+  }
+}

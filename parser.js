@@ -98,14 +98,14 @@ function parse(text,meta){
   for(let i=ck+1;i<L.length&&!isPay(L[i])&&!isTH(L[i])&&!isTot(L[i])&&!(th>=0&&i>=th);i++){if(U.has(i))break;if(!wordlike(L[i])){if(nt.length){U.add(i);break}continue}nt.push(L[i]);U.add(i)}
   out.notes=nt.join(' ')}
  /* 5. таблица позиций */
- const rows=[];let pend='',prev=null;const flush=()=>{if(pend){out.skipped.push({line:pend,why:'строка без количества'});pend=''}};
+ const rows=[];let pend='',pendL=-1,prev=null;const flush=()=>{if(pend){out.skipped.push({line:pend,why:'строка без количества'});pend=''}};
  const lo=th>=0?th+1:0,hi=th>=0?te:L.length;
  const FN_END=/(?:^|\s)(?:с|со|из|на|по|и|в|без|для|от)$/i;
  /* шум слева: «Же | горячий…», «ий      ТОРИ пицца маки», «нь     Киото маки» — короткий обрывок, отделённый «|» или большим пробелом */
  function tclean(raw){let x=String(raw).trim();const bar=x.match(/^(.{0,8}?)\|\s*(.+)$/);if(bar&&letters(bar[1])<=3)x=bar[2];
   const seg=x.split(/\s{3,}/);if(seg.length>1&&letters(seg[0])<=3&&!/\d[.,]\d/.test(seg[0])&&letters(seg.slice(1).join(' '))>=4)x=seg.slice(1).join('   ');return x.replace(/\s+/g,' ').trim()}
  /* продолжение названия на следующей строке: «СЫРНОМ СОУСЕ», «в сырном соусе», «(5 шт)». Без чисел, не мусор, не шапка. */
- function contOf(raw,pn){const ps=String(raw).match(/\(\s*(\d{1,2})\s*(?:шт|ШТ|Шт|[ТтTШш]{1,2})\.?\s*\)?/);if(ps&&letters(String(raw).replace(ps[0],''))<=4)return`(${ps[1]} шт)`;
+ function contOf(raw,pn){const ps=String(raw).match(/\(\s*(\d{1,2})\s*(?:шт|ШТ|Шт|[ТтTШшWw]{1,2})\.?\s*\)?/);if(ps&&letters(String(raw).replace(ps[0],''))<=4)return`(${ps[1]} шт)`;
   const segs=String(raw).split(/\s{3,}/).map(z=>z.trim()).filter(Boolean);let seg=segs.find(z=>nameish(z.replace(/^\S{1,3}\s+(?=\S{3})/,'')));if(!seg)return'';
   let w=seg.split(/\s+/);const PRE=/^(в|во|с|со|на|из|и|без)$/i;
   while(w.length&&!PRE.test(w[0])&&(letters(w[0])<3||/[^а-яёa-z.,]/i.test(w[0].replace(/[.,]$/,''))))w.shift();
@@ -114,20 +114,20 @@ function parse(text,meta){
   if(!nameish(tx)||hdrish(tx)||isTot(tx)||isPay(tx)||isTH(tx)||cutName(tx))return'';
   const ok=FN_END.test(pn)||PRE.test(w[0])||/^[а-яё]/.test(tx);if(!ok)return'';return tx.toLowerCase()}
  for(let i=lo;i<hi;i++){if(U.has(i))continue;const l=th>=0?tclean(RL[i]):L[i];if(!l)continue;
-  const ct=prev&&!pend&&th>=0&&!/\d\s*[.,:;]\s*\d/.test(RL[i])&&rowOf(l).kind!=='row'?contOf(RL[i],prev.name):'';if(ct){U.add(i);prev.name=(prev.name+' '+ct).replace(/\s+/g,' ');if(!prev.doubt.includes('перенос названия'))prev.doubt.push('перенос названия');prev.cont=(prev.cont||0)+1;continue}
+  const ct=prev&&!pend&&th>=0&&!/\d\s*[.,:;]\s*\d/.test(RL[i])&&rowOf(l).kind!=='row'?contOf(RL[i],prev.name):'';if(ct){U.add(i);prev.name=(prev.name+' '+ct).replace(/\s+/g,' ');if(!prev.doubt.includes('перенос названия'))prev.doubt.push('перенос названия');prev.cont=(prev.cont||0)+1;(prev.src=prev.src||[prev.line]).push(i);continue}
   if(th<0&&(isTot(l)||isPay(l)||/\d{2}\.\d{2}\.\d{2,4}|\d{1,2}:\d{2}/.test(l)))continue;
   if(!wordlike(l))continue;const r=rowOf(l);
   if(r.kind==='text'){ /* строка без чисел: часть названия только внутри таблицы, не мусор и не шапка/реклама; без найденного заголовка таблицы фрагменты не склеиваются вообще */
    const okTxt=th>=0&&nameish(l)&&!hdrish(l);if(!okTxt)continue;U.add(i);
-   if(prev&&/^[а-яёa-z]/.test(l)&&!pend&&!/\d.*\d/.test(l)&&l.split(' ').length<=6){prev.name+=' '+clean(l);if(!prev.doubt.includes('перенос названия'))prev.doubt.push('перенос названия')}else if(words(l).some(x=>x.length>=4)&&/[а-яё]{3}/i.test(l)){flush();pend=lead(clean(l)).name}continue}
+   if(prev&&/^[а-яёa-z]/.test(l)&&!pend&&!/\d.*\d/.test(l)&&l.split(' ').length<=6){prev.name+=' '+clean(l);(prev.src=prev.src||[prev.line]).push(i);if(!prev.doubt.includes('перенос названия'))prev.doubt.push('перенос названия')}else if(words(l).some(x=>x.length>=4)&&/[а-яё]{3}/i.test(l)){flush();pend=lead(clean(l)).name;pendL=i}continue}
   if(th<0&&(r.kind!=='row'))continue;                                                  // вне таблицы строка без «количество + сумма» — не позиция и не «пропущенная строка»
   U.add(i);
   if(r.kind!=='row'||letters(r.name)<3&&!pend){flush();out.skipped.push({line:clean(l),why:'не удалось определить количество и сумму'});prev=null;continue}
   if(hdrish(r.name)&&!pend){out.skipped.push({line:clean(l),why:'похоже на шапку или рекламу'});prev=null;continue}
-  let nm=r.name;const d=[...r.d];
-  if(pend){const glue=/^[а-яё]/.test(r.name)||FN_END.test(pend);if(glue&&!hdrish(pend)){nm=pend+' '+r.name;d.push('перенос названия')}else out.skipped.push({line:pend,why:'начало названия без количества'});pend=''}
+  let nm=r.name;const d=[...r.d];let src=[i];
+  if(pend){const glue=/^[а-яё]/.test(r.name)||FN_END.test(pend);if(glue&&!hdrish(pend)){nm=pend+' '+r.name;d.push('перенос названия');src=[pendL,i]}else out.skipped.push({line:pend,why:'начало названия без количества'});pend=''}
   if(th<0)d.push('таблица позиций не найдена: проверьте строку');
-  prev={name:nm,qty:r.qty,kind:CUT.test(nm)?'cutlery':'dish',doubt:d,sum:r.sum,dot:r.dot};if(r.sumRaw)prev.sumRaw=r.sumRaw;if(r.qg)prev.qg=true;prev.line=i;if(meta&&meta.lineY&&meta.lineY[i]!=null)prev.y=meta.lineY[i];rows.push(prev)}
+  prev={name:nm,qty:r.qty,kind:CUT.test(nm)?'cutlery':'dish',doubt:d,sum:r.sum,dot:r.dot};if(r.sumRaw)prev.sumRaw=r.sumRaw;if(r.qg)prev.qg=true;prev.line=i;prev.src=src;if(meta&&meta.lineY&&meta.lineY[i]!=null)prev.y=meta.lineY[i];rows.push(prev)}
  flush();
  const dots=rows.filter(r=>r.dot).length;if(dots&&dots>=rows.length/2)rows.forEach(r=>{if(!r.dot)r.doubt.push('количество без «.0»: возможна ошибка OCR')});
  out.items.push(...rows.map(({dot,...r})=>r));
@@ -140,7 +140,7 @@ function parse(text,meta){
   if(ok&&th<0)out.items.forEach(r=>{r.doubt=r.doubt.filter(x=>!x.startsWith('таблица позиций не найдена'))});
   if(!ok)out.warn.push(`Сумма позиций ${sum.toFixed(2)} не сходится с итогом чека (прочитано: ${[...new Set(cand.map(v=>v.toFixed(2)))].join(', ')}). Возможно, потеряна строка или неверно прочитана цифра. Сверьте с фото.`)}
  /* 7. объединение повторов */
- const mg=[];out.items.forEach(x=>{const key=x.kind+norm(x.name),y=mg.find(z=>z.key===key);if(y){y.qty+=x.qty;y.sum=+((y.sum||0)+(x.sum||0)).toFixed(2);x.doubt.forEach(d=>y.doubt.includes(d)||y.doubt.push(d))}else mg.push({...x,key})});
+ const mg=[];out.items.forEach(x=>{const key=x.kind+norm(x.name),y=mg.find(z=>z.key===key);if(y){y.qty+=x.qty;y.sum=+((y.sum||0)+(x.sum||0)).toFixed(2);y.dup=(y.dup||1)+1;x.doubt.forEach(d=>y.doubt.includes(d)||y.doubt.push(d))}else mg.push({...x,key})});
  out.items=mg.map(({key,...r})=>r).sort((a,b)=>(a.kind==='cutlery')-(b.kind==='cutlery'));
  out.dropped=L.filter((l,i)=>!U.has(i));
  const dish=out.items.some(x=>x.kind==='dish');

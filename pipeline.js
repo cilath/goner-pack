@@ -1,7 +1,7 @@
 /* GONER PACK 013 (на базе 012): конвейер распознавания чека. Не зависит от DOM и от конкретного OCR-движка:
    движок передаётся функцией recognize(img,{psm,tag},onPct) → {text,words:[{text,conf,x0,y0,x1,y1,line}]}.
    В браузере это Tesseract.js (ocr.js), в тестах — нативный Tesseract (tests/node-recognizer.js). */
-(function(r,f){const nd=typeof require==='function'&&typeof module==='object',m=f(nd?require('./imgproc.js'):r.IMG,nd?require('./parser.js'):r.GP,nd?require('./matcher.js'):r.GPM);if(typeof module==='object'&&module.exports)module.exports=m;else r.PIPE=m})(typeof self!=='undefined'?self:this,function(IMG,GP,GPM){
+(function(r,f){const nd=typeof require==='function'&&typeof module==='object',m=f(nd?require('./imgproc.js'):r.IMG,nd?require('./parser.js'):r.GP,nd?require('./matcher.js'):r.GPM,nd?require('./ctc.js'):r.GPCTC);if(typeof module==='object'&&module.exports)module.exports=m;else r.PIPE=m})(typeof self!=='undefined'?self:this,function(IMG,GP,GPM,CTC){
 const TARGET_H=34;                       // целевая высота букв (px) для OCR: при меньшей Tesseract ошибается чаще
 const VARIANTS=[                         // порядок: сначала самые вероятные; дальше работают только если первый не дал надёжного чека
  {id:'contrast',label:'Контраст, увеличение',psm:4,prep:(c,s)=>IMG.stretch(IMG.resize(c,c.w*s,c.h*s))},
@@ -70,7 +70,7 @@ function consensus(runs,best,opt){const m=opt&&opt.match,P=best.parsed,info={clu
   const ss=Object.entries(sv).sort((a,b)=>b[1]-a[1]);x.sum=ss.length?+ss[0][0]:null;x.sumAlts=ss.slice(1).map(q=>+q[0]);
   if(ss.length>1&&ss[1][1]>=ss[0][1]*.6){info.sumConflicts++;x.sumDoubt='сумма в проходах OCR разная: '+ss.map(q=>q[0]).join(' / ')}
   if(x.sum==null)x.doubt.push('сумма строки не прочитана ни в одном проходе'+(M.find(z=>z.raw)?` (видно «${M.find(z=>z.raw).raw}»)`:''));
-  const bd=M.find(z=>z.run===best.id);if(bd&&bd.x.ny!=null)x.ny=bd.x.ny;else{const z=M.find(z=>z.ny!=null);if(z)x.ny=z.ny}
+  const bd=M.find(z=>z.run===best.id);if(bd){if(bd.x.src)x.src=bd.x.src;if(bd.x.line!=null)x.line=bd.x.line;if(bd.x.qg)x.qg=true;if(bd.x.dup)x.dup=bd.x.dup}if(bd&&bd.x.ny!=null)x.ny=bd.x.ny;else{const z=M.find(z=>z.ny!=null);if(z)x.ny=z.ny}
   if(bd&&bd.x.doubt)bd.x.doubt.filter(d=>/цифры|лишний текст|начало строки|перенос/.test(d)).forEach(d=>{if(!x.doubt.includes(d))x.doubt.push(d)});
   if(x.name!==(bd&&bd.name))info.renamed++;
   x.keep=runs.length===1||runsIn.size>=2||!!(pick&&pick.d.st==='o'&&x.sum!=null);if(!x.keep&&(!c.m.some(z=>z.ok)||x.sum==null&&!c.m.some(z=>z.d.st==='o'||z.d.st==='s')))x.junk=true;
@@ -128,10 +128,58 @@ function combine(runs,o){o=o||{};const ranked=[...runs].sort((a,b)=>(b.parsed.qu
  if(!parsed.ex)for(const r of runs)if(r.parsed.ex){parsed.ex=r.parsed.ex;break}
  return{best,parsed,merge:cons}}
 /* 013: результат Neural OCR → формат конвейера. Нейросеть только читает строки; позиции собирает тот же разбор 012 + справочник + проверка итога. */
-function fromNeural(nr,o){o=o||{};const p=GP.parse(nr.text),run={id:'neural',label:'Нейросеть PP-OCRv5',psm:0,ms:nr.ms.total,size:nr.size,nwords:nr.words.length,text:nr.text,src:'neural',parsed:p,score:(p.score||0)+1e6};
+function fromNeural013(nr,o){o=o||{};const p=GP.parse(nr.text),run={id:'neural',label:'Нейросеть PP-OCRv5',psm:0,ms:nr.ms.total,size:nr.size,nwords:nr.words.length,text:nr.text,src:'neural',parsed:p,score:(p.score||0)+1e6};
  const C=combine([run],{match:o.match}),slim=({parsed,...r})=>({...r,no:parsed.no,ex:parsed.ex,quality:parsed.quality,items:parsed.items.length,skipped:parsed.skipped.length});
  return{best:{id:'neural',label:run.label,text:nr.text},parsed:C.parsed,runs:[slim(run)],runsRaw:[run],merge:C.merge,locate:{mode:'neural',rot:nr.rot,boxes:nr.boxes,region:nr.region},log:[{id:'neural',ms:nr.ms,boxes:nr.boxes,calls:nr.calls}],totalMs:nr.ms.total,engine:'neural',
-  neural:{ms:nr.ms,rot:nr.rot,lines:nr.lines.map(l=>({t:l.text,c:+l.conf.toFixed(3),b:[l.x0,l.y0,l.x1,l.y1].map(Math.round)}))}}}
+  neural:{ms:nr.ms,rot:nr.rot,lines:nr.lines.map(l=>({t:l.text,c:+l.conf.toFixed(3),b:[l.x0,l.y0,l.x1,l.y1].map(Math.round),q:l.qcol?l.qcol.q+'/'+l.qcol.post.toFixed(2):undefined}))}}}
+/* ---------- 017: позиции по выходу нейросети ---------- */
+const NUMTAIL=/(?:^|\s)[{(\[‚,'`"«‘’„|\\]*\d[\d.,:;\s]*$/;
+const xAt=(p,t)=>p.fx0+(t+.5)*p.fk;
+/* фрагменты названия позиции: части исходных строк левее колонки количества (и левее хвоста из чисел) */
+function nameParts(nr,src){const out=[];for(const li of src||[]){const l=nr.lines[li];if(!l)continue;const H=l.y1-l.y0,cut=l.qcol?l.qcol.x0-.1*H:null;
+  for(const p of[...l.parts].sort((a,b)=>a.x0-b.x0)){if(!p.m||!/[а-яёa-z]/i.test(p.text))continue;if(cut!=null&&p.rx0!=null&&p.rx0>=cut)continue;
+   let xc=cut!=null?cut:Infinity;const mm=p.text.match(NUMTAIL);if(mm&&mm.index>0){const k=mm.index+mm[0].search(/\S/);if(p.cf[k]!=null)xc=Math.min(xc,xAt(p,p.cf[k]-1))}
+   out.push({p,xc,box:{x0:p.x0,y0:p.y0,x1:Math.min(p.x1,xc+.3*H),y1:p.y1,ang:p.ang,wide:p.wide,rx0:p.rx0,rx1:p.rx1}})}
+  /* 017: строки-переносы, присоединённые к этой строке (neural.js joinWraps) */
+  for(const p of l.contParts||[])if(p.m&&/[а-яёa-z]/i.test(p.text))out.push({p,xc:Infinity,box:{x0:p.x0,y0:p.y0,x1:p.x1,y1:p.y1,ang:p.ang,wide:p.wide,rx0:p.rx0,rx1:p.rx1}})}return out}
+const cutM=(r,xc)=>{if(!r||!r.m)return null;if(!isFinite(xc))return r.m;const t1=Math.floor((xc-r.fx0)/r.fk-.5)+1;return CTC.slice(r.m,0,t1)};
+const segOf=parts=>CTC.concat(parts.map(z=>cutM(z.p,z.xc)).filter(Boolean));
+/* индекс справочника для CTC строится один раз на справочник */
+const IDX=new WeakMap();const ctcIndex=dict=>{if(!dict)return null;let x=IDX.get(dict);if(!x){x=CTC.index(dict);IDX.set(dict,x)}return x};
+/* перекрёстная проверка с прежним сопоставлением по тексту: если текст уверенно указывает на ДРУГОЕ блюдо — только предложение */
+function neuralDecide(x,r,o){const nn=CTC.decide(r,o.cfg);nn.text=x.name;
+ if(nn.dec==='auto'&&o.match){const m=o.match(x.name);if(m&&m.st==='o'&&m.name!==nn.name&&['exact','alias','order','spacing'].includes(m.how)){nn.dec='suggest';nn.note='текст строки совпадает с другим блюдом справочника'}}
+ return nn}
+function applyNeural(res,nr,o){o=o||{};const P=res.parsed,idx=o.ctcIdx||ctcIndex(o.dict),segs=[];res.neuralSegs=segs;const t0=Date.now();
+ for(const x of P.items){if(x.kind!=='dish')continue;
+  /* количество из своей колонки (017); без заголовка таблицы — прежний разбор 012 */
+  const l=x.line!=null?nr.lines[x.line]:null,qc=l&&l.qcol;
+  if(qc){x.qconf=+qc.post.toFixed(3);x.qcol=qc.q;const unsure=x.qg||(x.doubt||[]).some(d=>/количество прочитано неуверенно|количество в проходах|без «\.0»|количество ≥ 10/.test(d));
+   if(qc.q!==x.qty&&(qc.post>=.9||unsure&&qc.post>=.6)){x.qtyText=x.qty;x.qty=qc.q;x.doubt=(x.doubt||[]).filter(d=>!/количество/.test(d));if(qc.post<.9)x.doubt.push(`количество прочитано по колонке «Кол-в»: ${qc.q} (неуверенно), в строке «${x.qtyText}»`);else x.qfix=true}
+   else if(qc.q===x.qty&&qc.post>=.9){x.doubt=(x.doubt||[]).filter(d=>!/количество прочитано неуверенно|без «\.0»|количество ≥ 10/.test(d));delete x.qg}
+   else if(qc.q!==x.qty)x.doubt.push(`количество: в строке ${x.qty}, в колонке «Кол-в» ${qc.q} — проверьте по фото`)}
+  if(l&&l.scol&&x.sum==null){x.sum=+l.scol;x.doubt=(x.doubt||[]).filter(d=>!/сумма строки не прочитана|сумма не прочитана/.test(d));x.sumFix=true}
+  if(!idx||!idx.forms.length)continue;
+  const parts=nameParts(nr,x.src||(x.line!=null?[x.line]:[]));if(!parts.length)continue;const m=segOf(parts);if(!m||m.T<3)continue;
+  const r=CTC.rank(m,idx),nn=neuralDecide(x,r,o);x.nn=nn;segs.push({x,parts,r,conf:Math.min(...(x.src||[x.line]).map(i=>nr.lines[i]?nr.lines[i].conf:1))})}
+ recheckTotal(P);res.ctcMs=Date.now()-t0;return res}
+/* сверка итога после дочитанных сумм */
+function recheckTotal(P){const c=P.check;if(!c||!c.readings||!c.readings.length)return;const keep=P.items.filter(x=>x.kind==='dish');const s=+keep.reduce((a,z)=>a+(z.sum||0),0).toFixed(2),ok=keep.length>0&&keep.every(z=>z.sum!=null)&&c.readings.some(v=>Math.abs(v-s)<=.02);
+ if(ok&&!c.ok){P.check={...c,sum:s,total:s,ok:true};P.warn=(P.warn||[]).filter(w=>!/^Сумма (позиций|прочитанных строк)/.test(w));if(P.no)P.quality='good'}else P.check={...c,sum:s}}
+/* 017: повторное чтение трудных строк другим вырезом; оценки блюд по вариантам усредняются. Ограничено по времени. */
+async function refineNeural(res,nr,o){o=o||{};if(!nr||!nr.reread||!res.neuralSegs)return res;const T0=Date.now(),budget=o.budgetMs==null?2000:o.budgetMs,idx=o.ctcIdx||ctcIndex(o.dict),V=o.variants||['pad','contrast','shift'];let n=0;
+ const hard=res.neuralSegs.filter(z=>z.x.nn&&(z.x.nn.dec==='suggest'||z.x.nn.dec==='none'&&z.x.nn.gapFree>=-20&&z.conf<.95)).sort((a,b)=>(a.x.nn.dec==='suggest'?0:1)-(b.x.nn.dec==='suggest'?0:1)).slice(0,o.maxLines||8);
+ for(const z of hard){if(Date.now()-T0>budget)break;const rs=[z.r];
+  for(const v of V){if(Date.now()-T0>budget)break;const rr=await nr.reread(z.parts.map(q=>q.box),v);const parts=z.parts.map((q,k)=>({p:rr[k],xc:q.xc})).filter(q=>q.p&&q.p.m);if(!parts.length)continue;const m=segOf(parts);if(m&&m.T>=3)rs.push(CTC.rank(m,idx))}
+  if(rs.length>1){const mr=CTC.mergeRanks(rs),nn=neuralDecide(z.x,mr,o);nn.rereads=rs.length-1;nn.before=z.x.nn.dec;z.x.nn=nn;n++}}
+ /* количество: неуверенная ячейка — ещё раз с запасом по высоте и контрастом */
+ for(const x of res.parsed.items){if(Date.now()-T0>budget)break;const l=x.kind==='dish'&&x.line!=null?nr.lines[x.line]:null;if(!l||!l.qcol||l.qcol.post>=.85)continue;
+  const sc=[];for(const v of['pad','contrast']){const rr=await nr.reread([l.qcol.box],v);if(rr[0]&&rr[0].m)sc.push(CTC.qtyScores(rr[0].m))}const pk=CTC.qtyPick([...sc]);
+  if(pk&&pk.post>=.9&&pk.q===l.qcol.q){x.qconf=+Math.max(x.qconf||0,pk.post).toFixed(3);x.doubt=(x.doubt||[]).filter(d=>!/по колонке «Кол-в»: \d+ \(неуверенно\)/.test(d))}}
+ res.refineMs=Date.now()-T0;res.reread=n;return res}
+/* 013→017: результат Neural OCR → формат конвейера. Строки собирает разбор 012; 017 добавляет количество из колонки и выбор блюда по CTC. */
+function fromNeural(nr,o){o=o||{};const res=fromNeural013(nr,o);if(nr.lines&&nr.lines.some(l=>l.parts&&l.parts.some(p=>p.m)))applyNeural(res,nr,o);res.neural.table=nr.table;res.neural.turn=nr.turn;return res}
+
 /* нейросеть + резервный Tesseract: строки нейросети — опорный проход, проходы Tesseract голосуют в объединении 012 */
 function mergeEngines(nres,tres,o){o=o||{};const runs=[{...nres.runsRaw[0],score:1e6},...(tres.runsRaw||[])],C=combine(runs,{match:o.match});
  return{best:{...nres.best,label:'Нейросеть + резервный Tesseract'},parsed:C.parsed,runs:[...nres.runs,...tres.runs],runsRaw:runs,merge:C.merge,locate:nres.locate,log:[...nres.log,...(tres.log||[])],totalMs:nres.totalMs+tres.totalMs,engine:'neural+tesseract',neural:nres.neural}}
@@ -168,8 +216,9 @@ async function recognizeReceipt(src,o){o=o||{};const T0=Date.now(),log=[],P=o.on
     runs.push({id:'table',label:'Проход по таблице',psm:6,ms:Date.now()-t0,size:[strip.w,strip.h],text:res.text,geoText:gl&&gl.text,src:useG?'geo':'text',parsed,score:parsed.score,tableOnly:true});log.push({id:'table',ms:Date.now()-t0,lines:tb.lines})}}catch(e){log.push({id:'table',error:String(e)})}}}
  const C=combine(runs,{match:o.match,hdrVotes}),best=C.best,parsed=C.parsed,cons=C.merge;
  return{best:{id:best.id,label:best.label,text:best.text},parsed,runsRaw:runs.map(({_img,_gl,...r})=>r),runs:runs.map(({parsed,_img,_gl,...r})=>({...r,no:parsed.no,ex:parsed.ex,quality:parsed.quality,items:parsed.items.length,skipped:parsed.skipped.length})),merge:cons,locate,log,totalMs:Date.now()-T0,scale:s0}}
-function diagnostics(res,meta){const L=['GONER PACK 013: диагностика распознавания',`Время: ${new Date().toISOString()}`,meta?`Устройство: ${meta}`:'',`Общее время: ${Math.round((res.totalMs||0)/1000)} с; область: ${JSON.stringify(res.locate||{})}`,`Выбран проход: ${res.best&&res.best.label}`,''];
+function diagnostics(res,meta){const L=['GONER PACK 017: диагностика распознавания',`Время: ${new Date().toISOString()}`,meta?`Устройство: ${meta}`:'',`Общее время: ${Math.round((res.totalMs||0)/1000)} с; область: ${JSON.stringify(res.locate||{})}`,`Выбран проход: ${res.best&&res.best.label}`,''];
  (res.runs||[]).forEach(r=>{L.push(`--- проход «${r.label}» (${r.id}, PSM ${r.psm}, ${Math.round(r.ms/1000)} с, ${r.size&&r.size.join('×')}): номер=${r.no||'—'} ID=${r.ex||'—'} позиций=${r.items} качество=${r.quality} слов с рамками=${r.nwords==null?'?':r.nwords} разбор=${r.src||'?'}`);L.push(r.text||'')});
- if(res.neural){const n=res.neural;L.push('',`--- нейросеть: поиск строк ${Math.round(n.ms.det)} мс, чтение ${Math.round(n.ms.rec)} мс, наклон ${n.rot}°; строки (уверенность, рамка x0,y0,x1,y1):`);n.lines.forEach(l=>L.push(`${l.c.toFixed(2)} [${l.b.join(',')}] ${l.t}`))}
+ if(res.neural){const n=res.neural;L.push('',`--- нейросеть: поиск строк ${Math.round(n.ms.det)} мс, чтение ${Math.round(n.ms.rec)} мс, наклон ${n.rot}°; строки (уверенность, рамка x0,y0,x1,y1):`);n.lines.forEach(l=>L.push(`${l.c.toFixed(2)} [${l.b.join(',')}] ${l.t}${l.q?'  [кол-в '+l.q+']':''}`));if(n.table)L.push(`колонка количества: ${n.table.found?(n.table.header?'заголовок найден':'')+(n.table.calibrated?', границы по строкам':'')+`, ячеек ${n.table.rows}`:'заголовок таблицы не найден — количество по разбору 012'}${n.turn?`; фото развёрнуто на ${n.turn}°`:''}`);
+  const it=(res.parsed&&res.parsed.items||[]).filter(x=>x.nn);if(it.length){L.push('','--- выбор блюда по нейросети (CTC): решение; отрыв от свободного прочтения; отрыв от второго; варианты');it.forEach(x=>L.push(`«${x.nn.text}» → ${x.nn.dec}${x.nn.dec!=='none'?' «'+x.nn.name+'»':''}; ${x.nn.gapFree}; ${x.nn.gap2}${x.nn.fill?' (начинка)':''}; ${x.nn.cands.map(c=>c.n+' '+c.s).join(' | ')}${x.nn.rereads?'; повторных чтений '+x.nn.rereads:''}${x.qconf!=null?'; кол-во '+x.qty+' ('+x.qconf+')':''}`))}}
  return L.filter(x=>x!==null).join('\n')}
-return{recognizeReceipt,fromNeural,mergeEngines,combine,diagnostics,vote,weightedVotes,VARIANTS,TARGET_H,consensus,parseRun,tableBounds}});
+return{recognizeReceipt,fromNeural,fromNeural013,applyNeural,refineNeural,nameParts,ctcIndex,recheckTotal,mergeEngines,combine,diagnostics,vote,weightedVotes,VARIANTS,TARGET_H,consensus,parseRun,tableBounds}});

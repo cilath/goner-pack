@@ -1,14 +1,16 @@
-/* GONER PACK 008: IndexedDB, схема v2. Хранилища: orders, photos (ключ "<id заказа>:<receipt|delivery>"), dict.
+/* GONER PACK 008→017: IndexedDB, схема v4. Хранилища: orders, photos (ключ "<id заказа>:<receipt|delivery>"), dict, learn (014), prices (017:
+   цена за единицу блюда справочника {k, name, unit, t}; пишется при создании заказа по чеку, правится в справочнике).
    V007 (схема v1) хранила фото чека внутри заказа (поле photo); миграция переносит его в photos. */
 (function(r,f){const m=f();if(typeof module==='object'&&module.exports)module.exports=m;else r.DB=m})(typeof self!=='undefined'?self:this,function(){
-const VER=3,DAY=864e5,KINDS=['receipt','delivery'];
+const VER=4,DAY=864e5,KINDS=['receipt','delivery'];
 function upgrade(db,tx,old){
  if(old<1){db.createObjectStore('orders',{keyPath:'id'});db.createObjectStore('dict',{keyPath:'k'})}
  if(old<2){const ph=db.createObjectStore('photos',{keyPath:'key'}),q=tx.objectStore('orders').openCursor();
   q.onsuccess=()=>{const c=q.result;if(!c)return;const o=c.value;
    if(o.photo){ph.put({key:o.id+':receipt',orderId:o.id,kind:'receipt',data:o.photo,t:o.t});o.hasReceipt=true}else o.hasReceipt=!!o.hasReceipt;
    delete o.photo;o.hasDelivery=!!o.hasDelivery;c.update(o);c.continue()}}
- if(old<3)db.createObjectStore('learn',{keyPath:'k'})}
+ if(old<3)db.createObjectStore('learn',{keyPath:'k'});
+ if(old<4)db.createObjectStore('prices',{keyPath:'k'})}
 function open(name,onBlocked){return new Promise((ok,no)=>{let q;try{q=indexedDB.open(name||'gonerpack',VER)}catch(e){return no(e)}
  q.onupgradeneeded=e=>upgrade(q.result,q.transaction,e.oldVersion);
  q.onsuccess=()=>{q.result.onversionchange=()=>q.result.close();ok(wrap(q.result))};
@@ -26,6 +28,9 @@ function wrap(db){
   putLearn:async o=>(await run('learn','readwrite',t=>t.objectStore('learn').put(o))).ok,
   delLearn:async k=>(await run('learn','readwrite',t=>t.objectStore('learn').delete(k))).ok,
   clearLearn:async()=>(await run('learn','readwrite',t=>t.objectStore('learn').clear())).ok,
+  prices:async()=>(await run('prices','readonly',t=>t.objectStore('prices').getAll())).res||[],
+  putPrices:async a=>(await run('prices','readwrite',t=>{a.forEach(o=>t.objectStore('prices').put(o))})).ok,
+  delPrice:async k=>(await run('prices','readwrite',t=>t.objectStore('prices').delete(k))).ok,
   putDict:async o=>(await run('dict','readwrite',t=>t.objectStore('dict').put(o))).ok,
   putDictMany:async a=>(await run('dict','readwrite',t=>{a.forEach(o=>t.objectStore('dict').put(o))})).ok,
   delDict:async k=>(await run('dict','readwrite',t=>t.objectStore('dict').delete(k))).ok,

@@ -4,7 +4,7 @@ function score(p,T,o){o=o||{};const match=o.match,needsOk=o.needsOk,dn=n=>{if(!m
  const key=n=>dn(n)||norm(n);const want=T.items.filter(x=>x.kind!=='cutlery'),dish=p.items.filter(x=>x.kind==='dish'),used=new Set();let ok=0,qtyErr=0,sumErr=0;const missed=[],qtyBad=[];
  for(const t of want){const k=dish.findIndex((x,i)=>!used.has(i)&&key(x.name)===key(t.name));if(k<0){missed.push(t.name);continue}used.add(k);ok++;if(dish[k].qty!==t.qty){qtyErr++;qtyBad.push(`${t.name}: ${dish[k].qty} вместо ${t.qty}`)}if(t.sum!=null&&dish[k].sum!==t.sum)sumErr++}
  const extra=dish.filter((x,i)=>!used.has(i)).map(x=>x.name),cut=p.items.filter(x=>x.kind==='cutlery').map(x=>x.name+'×'+x.qty).sort(),wc=T.items.filter(x=>x.kind==='cutlery').map(x=>x.name+'×'+x.qty).sort();
- const manual=needsOk?p.items.filter(x=>needsOk({...x,st:x.kind==='cutlery'?'o':match?match(x.name).st:'u'},true)).length:null;
+ const manual=needsOk?p.items.filter(x=>needsOk({...x,st:x.kind==='cutlery'?'o':x.st?x.st:match?match(x.name).st:'u'},true)).length:null;   // 017: статус экрана проверки (review.js), если он уже посчитан
  return{ms:Math.round(o.ms||0),rows:dish.length,ok,want:want.length,qtyErr,qtyBad,sumErr,missed,extra,manual,no:!T.no||p.no===T.no,ex:!T.ex||p.ex===T.ex,total:!!(p.check&&p.check.ok),cut:!wc.length||JSON.stringify(cut)===JSON.stringify(wc),cutList:cut}}
 /* эталон из текста: строки «Название ×N» или «Название N»; приборы — с префиксом «прибор:» */
 function parseTruth(text){const items=[];String(text||'').split(/\r?\n/).forEach(l=>{l=l.trim();if(!l)return;const cut=/^прибор[ыа]?\s*:/i.test(l);l=l.replace(/^прибор[ыа]?\s*:\s*/i,'');const m=l.match(/^(.*?)\s*[×x*]?\s*(\d{1,2})\s*(шт\.?)?$/i);

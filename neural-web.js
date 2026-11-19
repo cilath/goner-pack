@@ -1,9 +1,11 @@
-/* GONER PACK 013: выполнение Neural OCR в браузере через onnxruntime-web (MIT, Microsoft), бэкенд WebAssembly.
+/* GONER PACK 013 (017: проверен в desktop Chromium сквозным тестом tests/ui017.test.js; на телефоне — нет): выполнение Neural OCR в браузере через onnxruntime-web (MIT, Microsoft), бэкенд WebAssembly.
    Модели лежат на самом сайте (папка models/, ~8.8 МБ), библиотека onnxruntime-web (~11 МБ wasm) при первом запуске берётся с jsdelivr;
    service worker кэширует всё для работы без интернета. Фото никуда не отправляется.
-   ВНИМАНИЕ: этот файл НЕ запускался на настоящем Android/Яндекс Браузере и в браузере песочницы (нет доступа к CDN). Логика модели
-   проверена тем же ONNX-файлом в ONNX Runtime (Python), предобработка — тем же neural.js. */
+   ВНИМАНИЕ: этот файл НЕ запускался на настоящем Android/Яндекс Браузере. В 017 он работает в desktop Chromium (файлы onnxruntime-web
+   в тесте подаются локально вместо CDN). */
 window.NEURAL_WEB=(()=>{const V='1.20.1',BASE=`https://cdn.jsdelivr.net/npm/onnxruntime-web@${V}/dist/`,M={det:'models/ppocrv5_mobile_det.onnx',rec:'models/eslav_ppocrv5_mobile_rec.onnx',keys:'models/ppocrv5_eslav_dict.txt'};
+ /* 017: другая модель распознавания — только как опция для испытаний (не по умолчанию): localStorage 'gp-rec-model' и 'gp-rec-keys' = пути к файлам в models/ */
+ try{const r=localStorage.getItem('gp-rec-model'),k=localStorage.getItem('gp-rec-keys');if(r&&k&&/^models\/[\w.-]+$/.test(r)&&/^models\/[\w.-]+$/.test(k)){M.rec=r;M.keys=k}}catch(e){}
  let st=null,loading=null,info={},err=null;
  const lib=()=>window.ort?Promise.resolve():new Promise((ok,no)=>{const s=document.createElement('script');s.src=BASE+'ort.wasm.min.js';s.onload=ok;s.onerror=()=>no(new Error('не удалось загрузить onnxruntime-web (нужен интернет при первом запуске)'));document.head.appendChild(s)});
  async function bytes(u,onP){const r=await fetch(u);if(!r.ok)throw new Error('файл модели не найден: '+u);const n=+r.headers.get('content-length')||0;if(!r.body||!n||!onP)return new Uint8Array(await r.arrayBuffer());

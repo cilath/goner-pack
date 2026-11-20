@@ -162,8 +162,11 @@ const parseTable=text=>parse('Наименование Кол-во Сумма\n'
 const SOFT=/^(перенос названия|начало строки очищено|проходы OCR прочитали название по-разному|цифры исправлены|символ «\(» заменён|справа от суммы есть лишний текст|сумма \d+\.\d+ выбрана из прочтений)/;
 const hard=x=>(x.doubt||[]).filter(d=>!(x.st==='o'&&SOFT.test(d)));
 const needsOk=(x,on)=>!!(hard(x).length||(on&&x.kind!=='cutlery'&&x.st!=='o'));
-function validate(d,on){const er=[];if(!/^\d+$/.test(String(d.no||'').trim()))er.push('Укажите номер предчека (только цифры)');
- if(String(d.ex||'').trim()&&!/^\d+$/.test(String(d.ex).trim()))er.push('Дополнительный ID: только цифры');
+/* 018: заказ по чеку определяется ТОЛЬКО ID заказа (доп. ID — число с двоеточием над приборами). Номер предчека необязателен.
+   Навынос по скриншоту — по-прежнему номер заказа. */
+function validate(d,on){const er=[],shot=d.origin==='screenshot',no=String(d.no||'').trim(),ex=String(d.ex||'').trim();
+ if(shot){if(!/^\d+$/.test(no))er.push('Укажите номер заказа (только цифры)')}
+ else{if(!/^\d+$/.test(ex))er.push('Укажите ID заказа (только цифры) — число с двоеточием над приборами');if(no&&!/^\d+$/.test(no))er.push('Номер предчека: только цифры (можно оставить пустым)')}
  if(!d.items.length)er.push('Добавьте хотя бы одну позицию');
  d.items.forEach((x,i)=>{if(!String(x.name).trim())er.push(`Позиция ${i+1}: нет названия`);if(!Number.isInteger(x.qty)||x.qty<1||x.qty>99)er.push(`Позиция ${i+1}: количество должно быть целым числом от 1 до 99`)});
  const u=d.items.filter(x=>needsOk(x,on)&&!x.cf).length;if(u)er.push(`Подтвердите сомнительные позиции: ${u}`);

@@ -50,3 +50,8 @@ test('IndexedDB: миграция схемы 3 → 4 сохраняет зака
   const t=q.transaction;t.objectStore('orders').put({id:1,no:'1044917',items:[],t:Date.now()});t.objectStore('learn').put({k:'сп кимчи',raw:'Сп Кимчи',target:'x'});t.objectStore('dict').put({k:'x',n:'Икс',a:[]})};q.onsuccess=()=>{q.result.close();ok()};q.onerror=no});
  const db=await DB.open('gp-mig');assert.strictEqual(db.raw.version,4);assert.strictEqual((await db.orders()).length,1);assert.strictEqual((await db.learn()).length,1);assert.strictEqual((await db.dict()).length,1);
  assert.ok(await db.putPrices([{k:'x',name:'Икс',unit:9.95,t:1}]));assert.deepStrictEqual((await db.prices()).map(p=>p.unit),[9.95]);assert.ok(await db.delPrice('x'));assert.strictEqual((await db.prices()).length,0);db.close()});
+test('018: заказ по чеку требует только ID заказа; номер предчека необязателен; навынос — номер заказа',()=>{const GP=require('../parser.js');
+ const it=[{name:'Кацудон',qty:1,kind:'dish',doubt:[],st:'o'}];
+ assert.deepStrictEqual(GP.validate({no:'',ex:'4837199',items:it},true),[]);
+ assert.ok(GP.validate({no:'1045046',ex:'',items:it},true).some(e=>/ID заказа/.test(e)));
+ assert.ok(GP.validate({no:'12',ex:'',items:it,origin:'screenshot'},true).length===0)});
